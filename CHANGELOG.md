@@ -9,13 +9,21 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### feat
+- (feat) CLI entrypoint `speak` (alias `speaker`); intended global install via `uv tool install` / pipx
+- (feat) Groq-first orchestration: key + reachability preflight (`models.list`), then local Orpheus EN/DE, then macOS `say`
+- (feat) `preflight_groq()` — cheap connectivity check before TTS
+
 ### docs
+- (docs) README quick start for `speak` + Groq; Metal/local documented as optional offline path
+- (docs) AGENTS.md priority inverted to match product (Groq → local → say)
 - (chore) fixed README: CI/Python/License/Ruff badges
 - (docs) available models table (local EN/DE GGUF, Groq, macOS say) in README
 - (docs) concise module/public API pydocs in `main.py` and `local_orpheus.py` (no restating inline comments)
 - (docs) header docs on `scripts/install_metal.sh`
 
 ### fix
+- (fix) lazy-import ``llama_cpp`` / ``LocalOrpheus`` so ``speak --help`` and Groq work without Metal install
 - (fix) SNAC decoder defaults to CPU to avoid macOS CoreAnalytics "Context leak" console spam; set `SPEAKER_USE_COREML=1` to opt back in
 
 ## [0.0.1] — 2026-07-25

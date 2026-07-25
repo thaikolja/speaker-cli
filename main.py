@@ -1,17 +1,17 @@
-"""speaker — local-first Orpheus TTS CLI with cloud and system fallbacks.
+"""speak — Groq-first Orpheus TTS CLI with local and system fallbacks.
 
-Priority: local Orpheus (EN/DE) → Groq Orpheus API (``troy``) → macOS ``say``.
+Priority: Groq Orpheus API (``troy``) → local Orpheus (EN/DE) → macOS ``say``.
 
 Environment Variables
     ---------------------
-    * ``GROQ_API_KEY`` — optional; required only for the Groq path.
+    * ``GROQ_API_KEY`` — primary path; without it (or if unreachable), local/say.
     * Values from a project ``.env`` are loaded at import time.
 
 CLI::
 
-    python main.py "Hello world"
-    python main.py -f notes.txt
-    speaker "Guten Tag"
+    speak "Hello world"
+    speak -f notes.txt
+    python main.py "Guten Tag"
 """
 
 from __future__ import annotations
@@ -27,13 +27,15 @@ import threading
 import time
 import wave
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from dotenv import load_dotenv
 from groq import APIConnectionError, APIStatusError, APITimeoutError, Groq, RateLimitError
 from langdetect import detect
 
-from local_orpheus import LocalOrpheus
+if TYPE_CHECKING:
+    from local_orpheus import LocalOrpheus
 
 load_dotenv()
 
@@ -57,12 +59,8 @@ ORPHEUS_RPD = 100
 ORPHEUS_TPM = 1200
 ORPHEUS_TPD = 3600
 API_TIMEOUT_S = 30.0
+PREFLIGHT_TIMEOUT_S = 5.0
 DELETE_AFTER_S = 10.0
-
-DEFAULT_TEXT = (
-    "Karim Khan, Chefankläger am Internationalen Strafgerichtshof, "
-    "sieht sich mit schweren Vorwürfen konfrontiert. Nun verliert er sein Amt."
-)
 
 SAY_PREFERRED = {
     "en": ["Samantha", "Daniel"],
@@ -236,15 +234,21 @@ def lang_code(s: str) -> str:
 
 
 def get_local_engine(lang: str) -> LocalOrpheus:
-    """Return a cached :class:`LocalOrpheus` for ``lang`` (one model resident)."""
+    """Return a cached :class:`LocalOrpheus` for ``lang`` (one model resident).
+
+    Imports ``local_orpheus`` lazily so ``speak --help`` and the Groq path work
+    without optional Metal ``llama-cpp-python``.
+    """
     global _engine, _engine_lang
+    from local_orpheus import LocalOrpheus as _LocalOrpheus
+
     if lang not in ("en", "de"):
         raise ValueError(f"local Orpheus only supports en/de, got {lang}")
     if _engine is not None and _engine_lang == lang:
         return _engine
     _engine = None
     _engine_lang = None
-    _engine = LocalOrpheus(lang=lang, n_gpu_layers=N_GPU_LAYERS, n_ctx=N_CTX, verbose=False)
+    _engine = _LocalOrpheus(lang=lang, n_gpu_layers=N_GPU_LAYERS, n_ctx=N_CTX, verbose=False)
     _engine_lang = lang
     return _engine
 
@@ -268,6 +272,25 @@ def speak_local_orpheus(s: str, lang: str) -> None:
         cleanup_speech(SPEECH_FILE, DELETE_AFTER_S)
 
 
+def preflight_groq(*, timeout_s: float = PREFLIGHT_TIMEOUT_S) -> tuple[bool, str]:
+    """Check API key and that Groq is reachable (cheap ``models.list`` call).
+
+    Returns
+    -------
+    ok, reason
+        ``(True, "ok")`` or ``(False, human-readable reason)``.
+    """
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key or not api_key.strip():
+        return False, "GROQ_API_KEY not set"
+    try:
+        client = Groq(api_key=api_key.strip(), timeout=timeout_s)
+        client.models.list()
+    except Exception as e:
+        return False, f"unreachable: {type(e).__name__}: {e}"
+    return True, "ok"
+
+
 def speak_groq(s: str) -> None:
     """Synthesize via Groq Orpheus API, play, record usage, cleanup."""
     api_key = os.environ.get("GROQ_API_KEY")
@@ -275,7 +298,7 @@ def speak_groq(s: str) -> None:
         raise RuntimeError("GROQ_API_KEY not set")
 
     client = Groq(api_key=api_key, timeout=API_TIMEOUT_S)
-    print(f"Groq fallback → {ORPHEUS_VOICE}")
+    print(f"Groq → {ORPHEUS_VOICE}")
     response = client.audio.speech.create(
         model=ORPHEUS_MODEL,
         voice=ORPHEUS_VOICE,
@@ -330,50 +353,58 @@ def speak_say(s: str, reason: str) -> None:
         subprocess.run(["say", s], check=True)
 
 
-def speak_groq_or_say(s: str, why_local_failed: str) -> None:
-    """Try Groq when limits allow; otherwise use macOS ``say``."""
-    ok, reason = fits_groq_limits(s)
-    if not ok:
-        speak_say(s, f"after local fail ({why_local_failed}); groq skipped: {reason}")
-        return
-    try:
-        print(f"Local Orpheus failed ({why_local_failed}); trying Groq…")
-        speak_groq(s)
-    except RateLimitError as e:
-        speak_say(s, f"API rate limit: {e}")
-    except APITimeoutError as e:
-        speak_say(s, f"API timeout: {e}")
-    except APIConnectionError as e:
-        speak_say(s, f"API connection: {e}")
-    except APIStatusError as e:
-        speak_say(s, f"API status {e.status_code}")
-    except Exception as e:
-        speak_say(s, f"API error: {type(e).__name__}: {e}")
-
-
 def speak(s: str) -> None:
-    """Speak ``s``: local Orpheus, then Groq, then ``say``."""
+    """Speak ``s``: Groq (if reachable), then local Orpheus EN/DE, then ``say``."""
+    reasons: list[str] = []
     lang = lang_code(s)
-    if lang not in ("en", "de"):
-        speak_groq_or_say(s, f"unsupported lang '{lang}' for local Orpheus")
-        return
-    try:
-        speak_local_orpheus(s, lang)
-    except Exception as e:
-        speak_groq_or_say(s, f"{type(e).__name__}: {e}")
+
+    ok, why = preflight_groq()
+    if not ok:
+        reasons.append(f"groq skipped: {why}")
+    else:
+        limits_ok, limit_reason = fits_groq_limits(s)
+        if not limits_ok:
+            reasons.append(f"groq skipped: {limit_reason}")
+        else:
+            try:
+                speak_groq(s)
+                return
+            except RateLimitError as e:
+                reasons.append(f"groq rate limit: {e}")
+            except APITimeoutError as e:
+                reasons.append(f"groq timeout: {e}")
+            except APIConnectionError as e:
+                reasons.append(f"groq connection: {e}")
+            except APIStatusError as e:
+                reasons.append(f"groq status {e.status_code}")
+            except Exception as e:
+                reasons.append(f"groq {type(e).__name__}: {e}")
+
+    if lang in ("en", "de"):
+        try:
+            if reasons:
+                print(f"Trying local Orpheus ({'; '.join(reasons)})…")
+            speak_local_orpheus(s, lang)
+            return
+        except Exception as e:
+            reasons.append(f"local {type(e).__name__}: {e}")
+    else:
+        reasons.append(f"local unsupported lang '{lang}'")
+
+    speak_say(s, "; ".join(reasons) if reasons else "all backends failed")
 
 
 def cli(argv: list[str] | None = None) -> int:
     """Parse CLI args and speak. Returns process exit code."""
     parser = argparse.ArgumentParser(
-        prog="speaker",
-        description="Local-first Orpheus TTS (EN/DE) with Groq and macOS say fallbacks",
+        prog="speak",
+        description="Groq-first Orpheus TTS (EN/DE local + macOS say fallbacks)",
     )
     parser.add_argument(
         "text",
         nargs="?",
         default=None,
-        help="Text to speak (default: built-in sample)",
+        help="Text to speak",
     )
     parser.add_argument(
         "-f",
@@ -388,7 +419,8 @@ def cli(argv: list[str] | None = None) -> int:
     elif args.text is not None:
         payload = args.text
     else:
-        payload = DEFAULT_TEXT
+        print("No text to speak. Pass text or -f FILE.", file=sys.stderr)
+        return 2
 
     if not payload:
         print("No text to speak.", file=sys.stderr)
