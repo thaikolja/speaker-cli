@@ -206,14 +206,20 @@ def test_groq_speech_speed_clamped(monkeypatch: pytest.MonkeyPatch) -> None:
     assert main.groq_speech_speed() == main.ORPHEUS_SPEED_MIN
 
 
-def test_scale_wav_speed_changes_framerate(tmp_path: Path) -> None:
+def test_scale_wav_speed_shortens_keeps_rate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Force pure-numpy path so CI does not depend on ffmpeg.
+    monkeypatch.setattr(main, "_scale_wav_speed_ffmpeg", lambda _p, _s: False)
     path = tmp_path / "t.wav"
-    audio = np.zeros(24_000, dtype=np.int16)
+    # Non-silent content so WSOLA has something to match.
+    audio = (np.sin(np.linspace(0, 40 * np.pi, 24_000)) * 10000).astype(np.int16)
     main.write_wav_mono_i16(path, 24_000, audio)
-    main.scale_wav_speed(path, 1.5)
+    main.scale_wav_speed(path, 2.0)
     with wave.open(str(path), "rb") as wf:
-        assert wf.getframerate() == 36_000
-        assert wf.getnframes() == 24_000
+        assert wf.getframerate() == 24_000
+        # ~half duration (allow WSOLA window slack)
+        assert 8_000 <= wf.getnframes() <= 16_000
 
 
 def test_scale_wav_speed_noop_at_one(tmp_path: Path) -> None:
@@ -222,6 +228,18 @@ def test_scale_wav_speed_noop_at_one(tmp_path: Path) -> None:
     main.scale_wav_speed(path, 1.0)
     with wave.open(str(path), "rb") as wf:
         assert wf.getframerate() == 16_000
+        assert wf.getnframes() == 100
+
+
+def test_atempo_filter_chain_splits_above_two() -> None:
+    assert main.atempo_filter_chain(3.0) == "atempo=2,atempo=1.5"
+
+
+def test_time_stretch_mono_faster_is_shorter() -> None:
+    x = np.sin(np.linspace(0, 20 * np.pi, 8000))
+    y = main.time_stretch_mono(x, 2.0)
+    assert len(y) < len(x) * 0.7
+    assert len(y) > len(x) * 0.3
 
 
 def test_preflight_groq_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -24,8 +24,10 @@ import contextlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import wave
@@ -248,66 +250,202 @@ def write_wav_mono_i16(path: Path, sample_rate: int, audio: np.ndarray) -> None:
         wf.writeframes(audio.tobytes())
 
 
-def scale_wav_speed(path: Path, speed: float) -> None:
-    """Rewrite ``path`` so playback duration is shorter/longer by ``speed``.
+def atempo_filter_chain(speed: float) -> str:
+    """Build an ffmpeg ``atempo`` chain (each stage must be in ``[0.5, 2.0]``)."""
+    if speed <= 0:
+        raise ValueError(f"speed must be positive, got {speed}")
+    factors: list[float] = []
+    remaining = float(speed)
+    while remaining > 2.0 + 1e-9:
+        factors.append(2.0)
+        remaining /= 2.0
+    while remaining < 0.5 - 1e-9:
+        factors.append(0.5)
+        remaining /= 0.5
+    factors.append(remaining)
+    return ",".join(f"atempo={f:.6g}" for f in factors)
 
-    Groq Orpheus ignores the API ``speed`` field; we change the WAV frame rate
-    instead (faster → higher pitch). ``speed`` of ``1.0`` is a no-op.
+
+def time_stretch_mono(samples: np.ndarray, speed: float, *, frame_length: int = 1024) -> np.ndarray:
+    """Pitch-preserving time stretch (WSOLA). ``speed`` > 1 → faster / shorter."""
+    x = np.ascontiguousarray(samples, dtype=np.float64).reshape(-1)
+    n = int(x.size)
+    if n == 0 or abs(speed - 1.0) < 1e-3:
+        return x
+    if speed <= 0:
+        raise ValueError(f"speed must be positive, got {speed}")
+
+    frame = min(frame_length, max(64, n // 2))
+    if frame % 2:
+        frame += 1
+    hop_s = max(1, frame // 2)
+    hop_a = max(1, round(hop_s * speed))
+    tol = max(0, min(hop_s, frame // 4))
+    window = np.hanning(frame)
+
+    out_len = max(frame, round(n / speed) + frame)
+    y = np.zeros(out_len + frame, dtype=np.float64)
+    wsum = np.zeros_like(y)
+
+    def grab(start: int) -> np.ndarray:
+        end = start + frame
+        if start < 0:
+            return np.zeros(frame, dtype=np.float64)
+        if end <= n:
+            return x[start:end].copy()
+        if start >= n:
+            return np.zeros(frame, dtype=np.float64)
+        part = x[start:n]
+        return np.pad(part, (0, frame - part.size))
+
+    src = 0
+    dst = 0
+    prev = grab(0)
+    y[dst : dst + frame] += prev * window
+    wsum[dst : dst + frame] += window
+    src = hop_a
+    dst = hop_s
+
+    while dst + frame < len(y) and src < n:
+        ideal = src
+        lo = max(0, ideal - tol)
+        hi = min(max(0, n - frame), ideal + tol)
+        best = ideal if ideal <= n - frame else max(0, n - frame)
+        if hi >= lo and n >= frame:
+            ref = prev[hop_s:]
+            best_score = -np.inf
+            for cand in range(lo, hi + 1):
+                seg = x[cand : cand + ref.size]
+                if seg.size != ref.size:
+                    continue
+                score = float(np.dot(seg, ref))
+                if score > best_score:
+                    best_score = score
+                    best = cand
+        frame_data = grab(best)
+        y[dst : dst + frame] += frame_data * window
+        wsum[dst : dst + frame] += window
+        prev = frame_data
+        src = best + hop_a
+        dst += hop_s
+
+    nz = wsum > 1e-8
+    y[nz] /= wsum[nz]
+    target = max(1, round(n / speed))
+    return y[:target]
+
+
+def _scale_wav_speed_ffmpeg(path: Path, speed: float) -> bool:
+    """Pitch-preserving tempo via ffmpeg ``atempo``. Returns True on success."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+    filt = atempo_filter_chain(speed)
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            subprocess.run(
+                [
+                    ffmpeg,
+                    "-y",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(path),
+                    "-filter:a",
+                    filt,
+                    str(tmp_path),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            tmp_path.replace(path)
+            return True
+        finally:
+            tmp_path.unlink(missing_ok=True)
+    except (OSError, subprocess.CalledProcessError):
+        with contextlib.suppress(OSError):
+            Path(tmp_path).unlink(missing_ok=True)
+        return False
+
+
+def scale_wav_speed(path: Path, speed: float) -> None:
+    """Rewrite ``path`` to play at ``speed`` without changing pitch.
+
+    Prefers ffmpeg ``atempo`` when available; otherwise pure-numpy WSOLA.
+    Same sample rate, shorter/longer duration. ``speed`` of ``1.0`` is a no-op.
     """
     if speed <= 0:
         raise ValueError(f"speed must be positive, got {speed}")
     if abs(speed - 1.0) < 1e-3:
         return
+    if _scale_wav_speed_ffmpeg(path, speed):
+        return
+
     with wave.open(str(path), "rb") as wf:
         nchannels = wf.getnchannels()
         sampwidth = wf.getsampwidth()
         framerate = wf.getframerate()
-        frames = wf.readframes(wf.getnframes())
-    new_rate = max(1, round(framerate * speed))
+        nframes = wf.getnframes()
+        raw = wf.readframes(nframes)
+
+    if sampwidth != 2:
+        # Uncommon for this app; fall back to frame-rate change only as last resort.
+        new_rate = max(1, round(framerate * speed))
+        with wave.open(str(path), "wb") as wf:
+            wf.setnchannels(nchannels)
+            wf.setsampwidth(sampwidth)
+            wf.setframerate(new_rate)
+            wf.writeframes(raw)
+        return
+
+    samples = np.frombuffer(raw, dtype=np.int16)
+    if nchannels > 1:
+        multi = samples.reshape(-1, nchannels)
+        channels = [time_stretch_mono(multi[:, ch], speed) for ch in range(nchannels)]
+        length = min(len(ch) for ch in channels)
+        out = np.stack([ch[:length] for ch in channels], axis=1)
+        out_i16 = np.clip(np.rint(out), -32768, 32767).astype(np.int16)
+        pcm = out_i16.reshape(-1).tobytes()
+    else:
+        mono = time_stretch_mono(samples, speed)
+        out_i16 = np.clip(np.rint(mono), -32768, 32767).astype(np.int16)
+        pcm = out_i16.tobytes()
+
     with wave.open(str(path), "wb") as wf:
         wf.setnchannels(nchannels)
-        wf.setsampwidth(sampwidth)
-        wf.setframerate(new_rate)
-        wf.writeframes(frames)
+        wf.setsampwidth(2)
+        wf.setframerate(framerate)
+        wf.writeframes(pcm)
 
 
-def play_wav(path: Path, *, speed: float = 1.0) -> None:
-    """Play a WAV via ``afplay`` (retries), then ``ffplay`` if needed.
-
-    ``speed`` is applied with ``afplay -r`` when not ``1.0`` (and as a filter for
-    ffplay). Prefer :func:`scale_wav_speed` on the file when you need the WAV
-    itself to reflect the rate.
-    """
+def play_wav(path: Path) -> None:
+    """Play a WAV via ``afplay`` (retries), then ``ffplay`` if needed."""
     path = path.resolve()
     last_err: Exception | None = None
-    afplay_cmd = ["afplay"]
-    if abs(speed - 1.0) >= 1e-3:
-        afplay_cmd.extend(["-r", f"{speed:g}"])
-    afplay_cmd.append(str(path))
     for _ in range(3):
         try:
-            subprocess.run(afplay_cmd, check=True)
+            subprocess.run(["afplay", str(path)], check=True)
             return
         except Exception as e:
             last_err = e
             time.sleep(0.3)
     try:
-        ffplay_cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"]
-        if abs(speed - 1.0) >= 1e-3:
-            # atempo accepts 0.5-2.0 per filter; chain if needed is overkill here
-            tempo = max(0.5, min(2.0, speed))
-            ffplay_cmd.extend(["-af", f"atempo={tempo:g}"])
-        ffplay_cmd.append(str(path))
-        subprocess.run(ffplay_cmd, check=True)
+        subprocess.run(
+            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)],
+            check=True,
+        )
         return
     except Exception:
         pass
     raise RuntimeError(f"playback failed: {last_err}")
 
 
-def play_and_cleanup(path: Path = SPEECH_FILE, *, speed: float = 1.0) -> None:
+def play_and_cleanup(path: Path = SPEECH_FILE) -> None:
     """Play ``path`` then schedule delayed deletion."""
-    play_wav(path, speed=speed)
+    play_wav(path)
     cleanup_speech(path, DELETE_AFTER_S)
 
 
@@ -356,10 +494,9 @@ def speak_local_orpheus(s: str, lang: str) -> None:
     if audio.size == 0:
         raise RuntimeError("local Orpheus returned empty audio")
     write_wav_mono_i16(SPEECH_FILE, sample_rate, audio)
-    speed = groq_speech_speed()
-    scale_wav_speed(SPEECH_FILE, speed)
+    scale_wav_speed(SPEECH_FILE, groq_speech_speed())
     try:
-        play_and_cleanup(SPEECH_FILE, speed=1.0)
+        play_and_cleanup(SPEECH_FILE)
     except Exception as play_err:
         print(f"Local audio saved but play failed ({play_err}); keeping {DELETE_AFTER_S}s")
         cleanup_speech(SPEECH_FILE, DELETE_AFTER_S)
@@ -453,7 +590,7 @@ def speak_groq(s: str) -> None:
     SPEECH_FILE.write_bytes(response.read())
     scale_wav_speed(SPEECH_FILE, speed)
     record_usage(estimate_tokens(s))
-    play_and_cleanup(SPEECH_FILE, speed=1.0)
+    play_and_cleanup(SPEECH_FILE)
 
 
 def list_say_voices() -> list[tuple[str, str]]:

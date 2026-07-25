@@ -85,7 +85,7 @@ Configured in code: Groq constants in [`main.py`](main.py), `LANG_TO_REPO` / `DE
 |---------------------|---------|
 | `GROQ_API_KEY` | Primary cloud path (preflight: key + `models.list`) |
 | `SPEAK_ENGINE` / `SPEAKER_ENGINE` | `auto` (default chain), or force `groq` / `local` / `say` |
-| `SPEAK_SPEED` / `ORPHEUS_SPEED` | Playback rate (0.5–3.0, default `1.0`). Applied client-side (Orpheus ignores API `speed`). |
+| `SPEAK_SPEED` / `ORPHEUS_SPEED` | Tempo (0.5–3.0, default `1.0`), **pitch-preserving** (ffmpeg `atempo` or numpy WSOLA). |
 | `SPEAKER_ENV` | Optional path to an env file to load first |
 | `LOCAL_VOICE_EN` / `LOCAL_VOICE_DE` | Local Orpheus voice tags (default `leo`) |
 | `ORPHEUS_VOICE` | Groq voice (default `troy`) |
