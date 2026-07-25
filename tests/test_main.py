@@ -188,6 +188,24 @@ def test_groq_api_key_strips_quotes(monkeypatch: pytest.MonkeyPatch) -> None:
     assert main.groq_api_key() == "gsk_quoted"
 
 
+def test_groq_speech_speed_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SPEAK_SPEED", raising=False)
+    monkeypatch.delenv("ORPHEUS_SPEED", raising=False)
+    assert main.groq_speech_speed() == main.ORPHEUS_SPEED
+
+
+def test_groq_speech_speed_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SPEAK_SPEED", "1.25")
+    assert main.groq_speech_speed() == 1.25
+
+
+def test_groq_speech_speed_clamped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SPEAK_SPEED", "9")
+    assert main.groq_speech_speed() == main.ORPHEUS_SPEED_MAX
+    monkeypatch.setenv("SPEAK_SPEED", "0.1")
+    assert main.groq_speech_speed() == main.ORPHEUS_SPEED_MIN
+
+
 def test_preflight_groq_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
 

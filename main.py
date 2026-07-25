@@ -85,6 +85,9 @@ N_CTX = 2048
 # https://console.groq.com/docs/text-to-speech/orpheus
 ORPHEUS_MODEL = "canopylabs/orpheus-v1-english"
 ORPHEUS_VOICE = "troy"
+ORPHEUS_SPEED = 1.0  # speaking rate; override with SPEAK_SPEED or ORPHEUS_SPEED env
+ORPHEUS_SPEED_MIN = 0.5
+ORPHEUS_SPEED_MAX = 2.0
 ORPHEUS_MAX_CHARS = 200
 ORPHEUS_RPM = 10
 ORPHEUS_RPD = 100
@@ -313,6 +316,21 @@ def groq_api_key() -> str | None:
     return key or None
 
 
+def groq_speech_speed() -> float:
+    """Speaking rate for Groq TTS (``SPEAK_SPEED`` / ``ORPHEUS_SPEED``, else default).
+
+    Clamped to :data:`ORPHEUS_SPEED_MIN` … :data:`ORPHEUS_SPEED_MAX`.
+    """
+    raw = os.environ.get("SPEAK_SPEED") or os.environ.get("ORPHEUS_SPEED")
+    if raw is None or not str(raw).strip():
+        return float(ORPHEUS_SPEED)
+    try:
+        speed = float(str(raw).strip().strip("'\""))
+    except ValueError:
+        return float(ORPHEUS_SPEED)
+    return max(ORPHEUS_SPEED_MIN, min(ORPHEUS_SPEED_MAX, speed))
+
+
 def preflight_groq(*, timeout_s: float = PREFLIGHT_TIMEOUT_S) -> tuple[bool, str]:
     """Check API key and that Groq is reachable (cheap ``models.list`` call).
 
@@ -344,12 +362,14 @@ def speak_groq(s: str) -> None:
         raise RuntimeError("GROQ_API_KEY not set")
 
     client = Groq(api_key=api_key, timeout=API_TIMEOUT_S)
-    print(f"Groq → {ORPHEUS_VOICE}")
+    speed = groq_speech_speed()
+    print(f"Groq → {ORPHEUS_VOICE} @ {speed:g}x")
     response = client.audio.speech.create(
         model=ORPHEUS_MODEL,
         voice=ORPHEUS_VOICE,
         response_format="wav",
         input=s,
+        speed=speed,
     )
     SPEECH_FILE.write_bytes(response.read())
     record_usage(estimate_tokens(s))
