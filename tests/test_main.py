@@ -206,6 +206,24 @@ def test_groq_speech_speed_clamped(monkeypatch: pytest.MonkeyPatch) -> None:
     assert main.groq_speech_speed() == main.ORPHEUS_SPEED_MIN
 
 
+def test_scale_wav_speed_changes_framerate(tmp_path: Path) -> None:
+    path = tmp_path / "t.wav"
+    audio = np.zeros(24_000, dtype=np.int16)
+    main.write_wav_mono_i16(path, 24_000, audio)
+    main.scale_wav_speed(path, 1.5)
+    with wave.open(str(path), "rb") as wf:
+        assert wf.getframerate() == 36_000
+        assert wf.getnframes() == 24_000
+
+
+def test_scale_wav_speed_noop_at_one(tmp_path: Path) -> None:
+    path = tmp_path / "t.wav"
+    main.write_wav_mono_i16(path, 16_000, np.zeros(100, dtype=np.int16))
+    main.scale_wav_speed(path, 1.0)
+    with wave.open(str(path), "rb") as wf:
+        assert wf.getframerate() == 16_000
+
+
 def test_preflight_groq_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
 

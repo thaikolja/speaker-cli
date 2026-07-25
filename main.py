@@ -87,7 +87,7 @@ ORPHEUS_MODEL = "canopylabs/orpheus-v1-english"
 ORPHEUS_VOICE = "troy"
 ORPHEUS_SPEED = 1.0  # speaking rate; override with SPEAK_SPEED or ORPHEUS_SPEED env
 ORPHEUS_SPEED_MIN = 0.5
-ORPHEUS_SPEED_MAX = 2.0
+ORPHEUS_SPEED_MAX = 3.0
 ORPHEUS_MAX_CHARS = 200
 ORPHEUS_RPM = 10
 ORPHEUS_RPD = 100
@@ -227,31 +227,66 @@ def write_wav_mono_i16(path: Path, sample_rate: int, audio: np.ndarray) -> None:
         wf.writeframes(audio.tobytes())
 
 
-def play_wav(path: Path) -> None:
-    """Play a WAV via ``afplay`` (retries), then ``ffplay`` if needed."""
+def scale_wav_speed(path: Path, speed: float) -> None:
+    """Rewrite ``path`` so playback duration is shorter/longer by ``speed``.
+
+    Groq Orpheus ignores the API ``speed`` field; we change the WAV frame rate
+    instead (faster → higher pitch). ``speed`` of ``1.0`` is a no-op.
+    """
+    if speed <= 0:
+        raise ValueError(f"speed must be positive, got {speed}")
+    if abs(speed - 1.0) < 1e-3:
+        return
+    with wave.open(str(path), "rb") as wf:
+        nchannels = wf.getnchannels()
+        sampwidth = wf.getsampwidth()
+        framerate = wf.getframerate()
+        frames = wf.readframes(wf.getnframes())
+    new_rate = max(1, round(framerate * speed))
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(nchannels)
+        wf.setsampwidth(sampwidth)
+        wf.setframerate(new_rate)
+        wf.writeframes(frames)
+
+
+def play_wav(path: Path, *, speed: float = 1.0) -> None:
+    """Play a WAV via ``afplay`` (retries), then ``ffplay`` if needed.
+
+    ``speed`` is applied with ``afplay -r`` when not ``1.0`` (and as a filter for
+    ffplay). Prefer :func:`scale_wav_speed` on the file when you need the WAV
+    itself to reflect the rate.
+    """
     path = path.resolve()
     last_err: Exception | None = None
+    afplay_cmd = ["afplay"]
+    if abs(speed - 1.0) >= 1e-3:
+        afplay_cmd.extend(["-r", f"{speed:g}"])
+    afplay_cmd.append(str(path))
     for _ in range(3):
         try:
-            subprocess.run(["afplay", str(path)], check=True)
+            subprocess.run(afplay_cmd, check=True)
             return
         except Exception as e:
             last_err = e
             time.sleep(0.3)
     try:
-        subprocess.run(
-            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)],
-            check=True,
-        )
+        ffplay_cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"]
+        if abs(speed - 1.0) >= 1e-3:
+            # atempo accepts 0.5-2.0 per filter; chain if needed is overkill here
+            tempo = max(0.5, min(2.0, speed))
+            ffplay_cmd.extend(["-af", f"atempo={tempo:g}"])
+        ffplay_cmd.append(str(path))
+        subprocess.run(ffplay_cmd, check=True)
         return
     except Exception:
         pass
     raise RuntimeError(f"playback failed: {last_err}")
 
 
-def play_and_cleanup(path: Path = SPEECH_FILE) -> None:
+def play_and_cleanup(path: Path = SPEECH_FILE, *, speed: float = 1.0) -> None:
     """Play ``path`` then schedule delayed deletion."""
-    play_wav(path)
+    play_wav(path, speed=speed)
     cleanup_speech(path, DELETE_AFTER_S)
 
 
@@ -300,8 +335,10 @@ def speak_local_orpheus(s: str, lang: str) -> None:
     if audio.size == 0:
         raise RuntimeError("local Orpheus returned empty audio")
     write_wav_mono_i16(SPEECH_FILE, sample_rate, audio)
+    speed = groq_speech_speed()
+    scale_wav_speed(SPEECH_FILE, speed)
     try:
-        play_and_cleanup(SPEECH_FILE)
+        play_and_cleanup(SPEECH_FILE, speed=1.0)
     except Exception as play_err:
         print(f"Local audio saved but play failed ({play_err}); keeping {DELETE_AFTER_S}s")
         cleanup_speech(SPEECH_FILE, DELETE_AFTER_S)
@@ -364,16 +401,17 @@ def speak_groq(s: str) -> None:
     client = Groq(api_key=api_key, timeout=API_TIMEOUT_S)
     speed = groq_speech_speed()
     print(f"Groq → {ORPHEUS_VOICE} @ {speed:g}x")
+    # Orpheus does not honor API ``speed``; we rescale the WAV after download.
     response = client.audio.speech.create(
         model=ORPHEUS_MODEL,
         voice=ORPHEUS_VOICE,
         response_format="wav",
         input=s,
-        speed=speed,
     )
     SPEECH_FILE.write_bytes(response.read())
+    scale_wav_speed(SPEECH_FILE, speed)
     record_usage(estimate_tokens(s))
-    play_and_cleanup(SPEECH_FILE)
+    play_and_cleanup(SPEECH_FILE, speed=1.0)
 
 
 def list_say_voices() -> list[tuple[str, str]]:

@@ -13,7 +13,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - (feat) CLI entrypoint `speak` (alias `speaker`); intended global install via `uv tool install` / pipx
 - (feat) Groq-first orchestration: key + reachability preflight (`models.list`), then local Orpheus EN/DE, then macOS `say`
 - (feat) `preflight_groq()` — cheap connectivity check before TTS
-- (feat) Groq speaking rate via `SPEAK_SPEED` / `ORPHEUS_SPEED` (0.5–2.0) passed as API `speed`
+- (feat) `SPEAK_SPEED` / `ORPHEUS_SPEED` (0.5–3.0) scales WAV playback client-side (Orpheus ignores API `speed`)
 
 ### docs
 - (docs) README quick start for `speak` + Groq; Metal/local documented as optional offline path
