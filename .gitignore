@@ -22,10 +22,13 @@ build/
 htmlcov/
 coverage.xml
 .dmypy.json
+.tox/
+.nox/
 
 # Secrets & local state
 .env
-.env.*
+.env.local
+.env.*.local
 !.env.example
 .groq_usage.json
 
@@ -39,7 +42,7 @@ bin/
 *.gguf
 *.onnx
 
-# Vendor clone (optional local checkout)
+# Vendor clone (optional; models come from Hugging Face)
 Orpheus-TTS/
 
 # OS / IDE
@@ -49,6 +52,4 @@ Thumbs.db
 .vscode/
 *.swp
 *~
-
-# Opencode / agent local
 .opencode/

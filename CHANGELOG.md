@@ -13,7 +13,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - (chore) fixed README: CI/Python/License/Ruff badges
 - (docs) available models table (local EN/DE GGUF, Groq, macOS say) in README
 
-## [0.1.0] — 2026-07-25
+## [0.0.1] — 2026-07-25
 
 ### feat
 - (feat) local-first Orpheus TTS for English and German via llama.cpp (Metal) + SNAC
@@ -32,5 +32,5 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### security
 - (security) Groq API key only via `GROQ_API_KEY` / `.env` (no hardcoded secrets)
 
-[Unreleased]: https://github.com/kolja/speaker/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/kolja/speaker/releases/tag/v0.1.0
+[Unreleased]: https://github.com/kolja/speaker/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/kolja/speaker/releases/tag/v0.0.1

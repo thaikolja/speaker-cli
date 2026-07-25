@@ -1,9 +1,6 @@
 # speaker
 
-[![CI](https://img.shields.io/github/actions/workflow/status/kolja/speaker/ci.yml?branch=main&label=CI)](../../actions/workflows/ci.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Ruff](https://img.shields.io/badge/code%20style-ruff-000000?logo=ruff)](https://docs.astral.sh/ruff/)
+[![CI](https://img.shields.io/github/actions/workflow/status/kolja/speaker/ci.yml?branch=main&label=CI)](../../actions/workflows/ci.yml) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE) [![Ruff](https://img.shields.io/badge/code%20style-ruff-000000?logo=ruff)](https://docs.astral.sh/ruff/)
 
 Local-first **text-to-speech** for **English** and **German**.
 

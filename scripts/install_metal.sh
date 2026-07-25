@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "Metal install is for macOS only." >&2
-  exit 1
+    echo "Metal install is for macOS only." >&2
+    exit 1
 fi
 
 export CMAKE_ARGS="-DGGML_METAL=on"

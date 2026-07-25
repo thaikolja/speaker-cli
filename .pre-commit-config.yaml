@@ -7,7 +7,7 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: check-added-large-files
-        args: ["--maxkb=500"]
+        args: [ "--maxkb=500" ]
       - id: detect-private-key
       - id: check-merge-conflict
 
@@ -15,13 +15,13 @@ repos:
     rev: v0.12.4
     hooks:
       - id: ruff
-        args: [--fix]
+        args: [ --fix ]
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.17.0
     hooks:
       - id: mypy
-        additional_dependencies: []
-        args: [main.py, local_orpheus.py, tests]
+        additional_dependencies: [ ]
+        args: [ main.py, local_orpheus.py, tests ]
         pass_filenames: false
