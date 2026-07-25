@@ -358,15 +358,22 @@ def test_speak_english_auto_prefers_groq(monkeypatch: pytest.MonkeyPatch) -> Non
     assert order == ["groq"]
 
 
-def test_speak_german_auto_prefers_say(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_speak_german_auto_prefers_local(monkeypatch: pytest.MonkeyPatch) -> None:
     order: list[str] = []
+    langs: list[str] = []
     main.set_settings(main.Settings(engine="auto", groq_api_key="x"))
     monkeypatch.setattr(main, "local_lang", lambda _s: "de")
     monkeypatch.setattr(main, "speak_groq", lambda _s: order.append("groq"))
-    monkeypatch.setattr(main, "speak_local_orpheus", lambda _s, _l: order.append("local"))
+
+    def local(_s: str, lang: str) -> None:
+        langs.append(lang)
+        order.append("local")
+
+    monkeypatch.setattr(main, "speak_local_orpheus", local)
     monkeypatch.setattr(main, "speak_say", lambda _s, _r="": order.append("say"))
     main.speak("Guten Tag, wie geht es Ihnen heute?")
-    assert order == ["say"]
+    assert order == ["local"]
+    assert langs == ["de"]
 
 
 def test_speak_local_when_preflight_fails(monkeypatch: pytest.MonkeyPatch) -> None:

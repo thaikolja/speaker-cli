@@ -12,7 +12,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### feat
 - (feat) CLI is **`speak` only** (removed `speaker` alias) with full optional flags (shown in `--help`)
 - (feat) **`config.json`** for all defaults/internals (`~/.config/speak/config.json`); `--write-config` helper
-- (feat) language-aware `engine=auto`: **English** Groq→local→say; **German** macOS say→local→Groq
+- (feat) language-aware `engine=auto`: **English** Groq→local→say; **German** local DE Orpheus→Groq→say
 - (feat) Groq reachability preflight (`models.list`) before cloud TTS
 - (feat) `engine` = `auto` \| `groq` \| `local` \| `say` (config + `--engine`)
 - (feat) pitch-preserving `speed` (ffmpeg `atempo` or WSOLA; config + `--speed`)

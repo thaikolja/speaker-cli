@@ -13,11 +13,11 @@ English (engine=auto):
          macOS say
 
 German (engine=auto):
-  text → macOS say (Anna, …)        # native
-           ↓ fail
-         local Orpheus (DE)
+  text → local Orpheus (DE GGUF, voice leo)
            ↓ fail
          Groq
+           ↓ fail
+         macOS say
 ```
 
 ## Quick start
@@ -52,7 +52,7 @@ See [`config.example.json`](config.example.json). Important keys:
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `engine` | `auto` | `auto` (EN→Groq first, DE→macOS say first) \| `groq` \| `local` \| `say` |
+| `engine` | `auto` | `auto` (EN→Groq first, DE→local DE Orpheus first) \| `groq` \| `local` \| `say` |
 | `speed` | `1.0` | Pitch-preserving tempo (0.5–3.0) |
 | `groq_api_key` | `""` | Groq key (or env `GROQ_API_KEY` override) |
 | `groq_voice` | `troy` | Groq voice |

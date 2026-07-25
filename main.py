@@ -3,7 +3,7 @@
 Default priority (``engine=auto``), by language:
 
 * **English:** Groq → local Orpheus → macOS ``say``
-* **German:** macOS ``say`` (native) → local Orpheus → Groq
+* **German:** local Orpheus (DE GGUF) → Groq → macOS ``say``
 
 Force one backend for all languages with ``engine=groq|local|say``.
 
@@ -850,9 +850,9 @@ def speak(s: str) -> None:
         _try_say(s, reason="engine=say", forced=True)
         return
 
-    # auto: English prioritizes Groq; German prioritizes native macOS say.
+    # auto: English prioritizes Groq; German prioritizes local DE Orpheus.
     if loc == "de":
-        _speak_chain(s, loc, ["say", "local", "groq"])
+        _speak_chain(s, loc, ["local", "groq", "say"])
     else:
         _speak_chain(s, loc, ["groq", "local", "say"])
 
@@ -862,7 +862,7 @@ def build_parser(defaults: Settings) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="speak",
         description=(
-            "Text-to-speech: English prefers Groq, German prefers macOS say "
+            "Text-to-speech: English prefers Groq, German prefers local DE Orpheus "
             f"(engine=auto). Defaults: {CONFIG_DIR / 'config.json'}."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -880,7 +880,7 @@ def build_parser(defaults: Settings) -> argparse.ArgumentParser:
         "--engine",
         default=defaults.engine,
         choices=["auto", "groq", "local", "say"],
-        help="TTS backend (auto: EN→Groq first, DE→macOS say first)",
+        help="TTS backend (auto: EN→Groq first, DE→local Orpheus first)",
     )
     parser.add_argument(
         "--speed",

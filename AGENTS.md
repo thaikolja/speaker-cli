@@ -7,7 +7,7 @@ This file tells automated coding agents how to work in this repository.
 **speak** is a TTS CLI (`speak` console script only):
 
 1. **English (`engine=auto`):** Groq → local Orpheus → macOS `say`  
-2. **German (`engine=auto`):** macOS `say` (native) → local Orpheus → Groq  
+2. **German (`engine=auto`):** local Orpheus DE GGUF → Groq → macOS `say`  
 3. Forced `engine=groq|local|say` applies to all languages
 
 Defaults live in **`config.json`**. CLI flags override config.
