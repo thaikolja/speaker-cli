@@ -162,9 +162,30 @@ def test_cli_text_arg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 def test_preflight_groq_missing_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("SPEAKER_ENV", raising=False)
+    monkeypatch.setattr(main, "load_env_files", lambda: [])
     ok, reason = main.preflight_groq()
     assert ok is False
     assert "GROQ_API_KEY" in reason
+
+
+def test_load_env_files_reads_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    env_file = tmp_path / "speaker.env"
+    env_file.write_text("GROQ_API_KEY=gsk_from_file\n", encoding="utf-8")
+    monkeypatch.setenv("SPEAKER_ENV", str(env_file))
+    monkeypatch.chdir(tmp_path)
+    # Avoid accidental home config files during the test.
+    monkeypatch.setattr(main, "CONFIG_ENV", tmp_path / "no-config.env")
+    monkeypatch.setattr(main, "HOME_ENV", tmp_path / "no-home.env")
+    loaded = main.load_env_files()
+    assert env_file in loaded
+    assert main.groq_api_key() == "gsk_from_file"
+
+
+def test_groq_api_key_strips_quotes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", '  "gsk_quoted"  ')
+    assert main.groq_api_key() == "gsk_quoted"
 
 
 def test_preflight_groq_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:

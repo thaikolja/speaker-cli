@@ -20,11 +20,19 @@ Global `speak` command via [uv](https://docs.astral.sh/uv/) (Python **3.11+**):
 uv tool install git+https://github.com/thaikolja/speaker-cli.git
 # or: pipx install git+https://github.com/thaikolja/speaker-cli.git
 
-export GROQ_API_KEY=gsk_your_key_here   # https://console.groq.com
+# API key (pick one):
+export GROQ_API_KEY=gsk_your_key_here          # shell
+# or permanent file for global `speak` (recommended):
+mkdir -p ~/.config/speaker
+echo 'GROQ_API_KEY=gsk_your_key_here' > ~/.config/speaker/.env
+
 speak "Hello from Groq."
 speak "Guten Tag, das ist ein Test."
 speak -f notes.txt
 ```
+
+A project-local `./.env` is also loaded when you run `speak` from that directory.
+A repo `.env` is **not** used if you run `speak` from elsewhere (e.g. `~/Downloads`).
 
 With a working `GROQ_API_KEY`, **no model download and no Metal install** are required.
 
@@ -76,6 +84,7 @@ Configured in code: Groq constants in [`main.py`](main.py), `LANG_TO_REPO` / `DE
 | Variable / constant | Meaning |
 |---------------------|---------|
 | `GROQ_API_KEY` | Primary cloud path (preflight: key + `models.list`) |
+| `SPEAKER_ENV` | Optional path to an env file to load first |
 | `LOCAL_VOICE_EN` / `LOCAL_VOICE_DE` | Local Orpheus voice tags (default `leo`) |
 | `ORPHEUS_VOICE` | Groq voice (default `troy`) |
 | `DELETE_AFTER_S` | Seconds before deleting `speech.wav` (default `10`) |

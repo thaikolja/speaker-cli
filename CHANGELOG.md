@@ -23,6 +23,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - (docs) header docs on `scripts/install_metal.sh`
 
 ### fix
+- (fix) load ``GROQ_API_KEY`` from ``~/.config/speaker/.env``, ``~/.speaker.env``, cwd ``.env``, or ``SPEAKER_ENV`` (global ``speak`` no longer requires exporting the key every session)
 - (fix) lazy-import ``llama_cpp`` / ``LocalOrpheus`` so ``speak --help`` and Groq work without Metal install
 - (fix) SNAC decoder defaults to CPU to avoid macOS CoreAnalytics "Context leak" console spam; set `SPEAKER_USE_COREML=1` to opt back in
 

@@ -5,7 +5,7 @@ Priority: Groq Orpheus API (``troy``) → local Orpheus (EN/DE) → macOS ``say`
 Environment Variables
     ---------------------
     * ``GROQ_API_KEY`` — primary path; without it (or if unreachable), local/say.
-    * Values from a project ``.env`` are loaded at import time.
+    * Loaded from the process env, then ``.env`` files (see :func:`load_env_files`).
 
 CLI::
 
@@ -37,11 +37,43 @@ from langdetect import detect
 if TYPE_CHECKING:
     from local_orpheus import LocalOrpheus
 
-load_dotenv()
-
 ROOT = Path(__file__).resolve().parent
 SPEECH_FILE = ROOT / "speech.wav"
 USAGE_FILE = ROOT / ".groq_usage.json"
+CONFIG_ENV = Path.home() / ".config" / "speaker" / ".env"
+HOME_ENV = Path.home() / ".speaker.env"
+
+
+def env_file_candidates() -> list[Path]:
+    """``.env`` paths checked for secrets (first match wins per key).
+
+    Order: ``SPEAKER_ENV`` (if set), cwd ``.env``, ``~/.config/speaker/.env``,
+    ``~/.speaker.env``. Process environment always wins over files.
+    """
+    paths: list[Path] = []
+    custom = os.environ.get("SPEAKER_ENV")
+    if custom:
+        paths.append(Path(custom).expanduser())
+    paths.append(Path.cwd() / ".env")
+    paths.append(CONFIG_ENV)
+    paths.append(HOME_ENV)
+    return paths
+
+
+def load_env_files() -> list[Path]:
+    """Load known ``.env`` files without overriding existing process env vars."""
+    loaded: list[Path] = []
+    for path in env_file_candidates():
+        try:
+            if path.is_file():
+                load_dotenv(path, override=False)
+                loaded.append(path)
+        except OSError:
+            continue
+    return loaded
+
+
+load_env_files()
 
 # Local Orpheus — EN tags: tara, leah, jess, leo, dan, mia, zac, zoe (no "troy")
 LOCAL_VOICE_EN = "leo"
@@ -272,6 +304,15 @@ def speak_local_orpheus(s: str, lang: str) -> None:
         cleanup_speech(SPEECH_FILE, DELETE_AFTER_S)
 
 
+def groq_api_key() -> str | None:
+    """Return stripped ``GROQ_API_KEY`` from the environment, or ``None``."""
+    key = os.environ.get("GROQ_API_KEY")
+    if key is None:
+        return None
+    key = key.strip().strip("'\"")
+    return key or None
+
+
 def preflight_groq(*, timeout_s: float = PREFLIGHT_TIMEOUT_S) -> tuple[bool, str]:
     """Check API key and that Groq is reachable (cheap ``models.list`` call).
 
@@ -280,11 +321,16 @@ def preflight_groq(*, timeout_s: float = PREFLIGHT_TIMEOUT_S) -> tuple[bool, str
     ok, reason
         ``(True, "ok")`` or ``(False, human-readable reason)``.
     """
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key or not api_key.strip():
-        return False, "GROQ_API_KEY not set"
+    # Reload so a cwd ``.env`` is seen even if the process started elsewhere.
+    load_env_files()
+    api_key = groq_api_key()
+    if not api_key:
+        return (
+            False,
+            f"GROQ_API_KEY not set (export it, or put it in {CONFIG_ENV} or ./.env)",
+        )
     try:
-        client = Groq(api_key=api_key.strip(), timeout=timeout_s)
+        client = Groq(api_key=api_key, timeout=timeout_s)
         client.models.list()
     except Exception as e:
         return False, f"unreachable: {type(e).__name__}: {e}"
@@ -293,7 +339,7 @@ def preflight_groq(*, timeout_s: float = PREFLIGHT_TIMEOUT_S) -> tuple[bool, str
 
 def speak_groq(s: str) -> None:
     """Synthesize via Groq Orpheus API, play, record usage, cleanup."""
-    api_key = os.environ.get("GROQ_API_KEY")
+    api_key = groq_api_key()
     if not api_key:
         raise RuntimeError("GROQ_API_KEY not set")
 
