@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import argparse
+import contextlib
 import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import wave
@@ -25,11 +28,13 @@ USAGE_FILE = ROOT / ".groq_usage.json"
 # --- Local Orpheus (default) ---
 # EN OSS voices: tara, leah, jess, leo, dan, mia, zac, zoe  (no Groq "troy")
 LOCAL_VOICE_EN = "leo"
-LOCAL_VOICE_DE = "leo"  # DE weights + same tag format; male-leaning
+LOCAL_VOICE_DE = "leo"
 N_GPU_LAYERS = -1
 N_CTX = 2048
 
 # --- Groq optional fallback ---
+# https://console.groq.com/docs/rate-limits
+# https://console.groq.com/docs/text-to-speech/orpheus
 ORPHEUS_MODEL = "canopylabs/orpheus-v1-english"
 ORPHEUS_VOICE = "troy"
 ORPHEUS_MAX_CHARS = 200
@@ -40,20 +45,39 @@ ORPHEUS_TPD = 3600
 API_TIMEOUT_S = 30.0
 DELETE_AFTER_S = 10.0
 
-text = "Karim Khan, Chefankläger am Internationalen Strafgerichtshof, sieht sich mit schweren Vorwürfen konfrontiert. Nun verliert er sein Amt."
-# text = "Hello, I'm speaking English and can help you with your questions."
+DEFAULT_TEXT = (
+    "Karim Khan, Chefankläger am Internationalen Strafgerichtshof, "
+    "sieht sich mit schweren Vorwürfen konfrontiert. Nun verliert er sein Amt."
+)
 
 SAY_PREFERRED = {
     "en": ["Samantha", "Daniel"],
     "de": ["Anna", "Reed (Deutsch (Deutschland))", "Eddy (Deutsch (Deutschland))"],
 }
 SAY_SKIP = {
-    "Albert", "Bad News", "Bahh", "Bells", "Boing", "Bubbles", "Cellos",
-    "Wobble", "Fred", "Good News", "Jester", "Junior", "Kathy", "Organ",
-    "Superstar", "Ralph", "Trinoids", "Whisper", "Zarvox", "Grandma", "Grandpa",
+    "Albert",
+    "Bad News",
+    "Bahh",
+    "Bells",
+    "Boing",
+    "Bubbles",
+    "Cellos",
+    "Wobble",
+    "Fred",
+    "Good News",
+    "Jester",
+    "Junior",
+    "Kathy",
+    "Organ",
+    "Superstar",
+    "Ralph",
+    "Trinoids",
+    "Whisper",
+    "Zarvox",
+    "Grandma",
+    "Grandpa",
 }
 
-# Only one heavy model resident at a time (saves RAM on M-series)
 _engine: LocalOrpheus | None = None
 _engine_lang: str | None = None
 
@@ -62,46 +86,56 @@ def estimate_tokens(s: str) -> int:
     return max(1, (len(s) + 3) // 4)
 
 
-def load_usage() -> list[dict]:
-    if not USAGE_FILE.is_file():
+def load_usage(path: Path = USAGE_FILE) -> list[dict]:
+    if not path.is_file():
         return []
     try:
-        data = json.loads(USAGE_FILE.read_text())
+        data = json.loads(path.read_text())
         cutoff = time.time() - 86400
         return [e for e in data.get("events", []) if e.get("ts", 0) >= cutoff]
     except (json.JSONDecodeError, OSError):
         return []
 
 
-def save_usage(events: list[dict]) -> None:
+def save_usage(events: list[dict], path: Path = USAGE_FILE) -> None:
     cutoff = time.time() - 86400
     events = [e for e in events if e.get("ts", 0) >= cutoff]
-    USAGE_FILE.write_text(json.dumps({"events": events}, indent=2))
+    path.write_text(json.dumps({"events": events}, indent=2))
 
 
-def record_usage(tokens: int) -> None:
-    events = load_usage()
+def record_usage(tokens: int, path: Path = USAGE_FILE) -> None:
+    events = load_usage(path)
     events.append({"ts": time.time(), "tokens": tokens})
-    save_usage(events)
+    save_usage(events, path)
 
 
-def fits_groq_limits(s: str) -> tuple[bool, str]:
-    if len(s) > ORPHEUS_MAX_CHARS:
-        return False, f"input {len(s)} chars > {ORPHEUS_MAX_CHARS} max"
+def fits_groq_limits(
+    s: str,
+    *,
+    usage_path: Path = USAGE_FILE,
+    max_chars: int = ORPHEUS_MAX_CHARS,
+    rpm: int = ORPHEUS_RPM,
+    rpd: int = ORPHEUS_RPD,
+    tpm: int = ORPHEUS_TPM,
+    tpd: int = ORPHEUS_TPD,
+    now: float | None = None,
+) -> tuple[bool, str]:
+    if len(s) > max_chars:
+        return False, f"input {len(s)} chars > {max_chars} max"
     tokens = estimate_tokens(s)
-    now = time.time()
-    events = load_usage()
-    last_min = [e for e in events if e["ts"] >= now - 60]
-    if len(last_min) >= ORPHEUS_RPM:
-        return False, f"RPM {len(last_min)}/{ORPHEUS_RPM}"
-    if len(events) >= ORPHEUS_RPD:
-        return False, f"RPD {len(events)}/{ORPHEUS_RPD}"
-    tpm = sum(e["tokens"] for e in last_min)
-    tpd = sum(e["tokens"] for e in events)
-    if tpm + tokens > ORPHEUS_TPM:
-        return False, f"TPM {tpm}+{tokens} > {ORPHEUS_TPM}"
-    if tpd + tokens > ORPHEUS_TPD:
-        return False, f"TPD {tpd}+{tokens} > {ORPHEUS_TPD}"
+    ts = time.time() if now is None else now
+    events = load_usage(usage_path)
+    last_min = [e for e in events if e["ts"] >= ts - 60]
+    if len(last_min) >= rpm:
+        return False, f"RPM {len(last_min)}/{rpm}"
+    if len(events) >= rpd:
+        return False, f"RPD {len(events)}/{rpd}"
+    used_tpm = sum(e["tokens"] for e in last_min)
+    used_tpd = sum(e["tokens"] for e in events)
+    if used_tpm + tokens > tpm:
+        return False, f"TPM {used_tpm}+{tokens} > {tpm}"
+    if used_tpd + tokens > tpd:
+        return False, f"TPD {used_tpd}+{tokens} > {tpd}"
     return True, "ok"
 
 
@@ -109,10 +143,8 @@ def cleanup_speech(path: Path = SPEECH_FILE, delay_s: float = DELETE_AFTER_S) ->
     def _delete() -> None:
         if delay_s > 0:
             time.sleep(delay_s)
-        try:
+        with contextlib.suppress(OSError):
             path.unlink(missing_ok=True)
-        except OSError:
-            pass
 
     if delay_s <= 0:
         path.unlink(missing_ok=True)
@@ -141,7 +173,6 @@ def play_wav(path: Path) -> None:
         except Exception as e:
             last_err = e
             time.sleep(0.3)
-    # Fallback player
     try:
         subprocess.run(
             ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)],
@@ -160,7 +191,7 @@ def play_and_cleanup(path: Path = SPEECH_FILE) -> None:
 
 def lang_code(s: str) -> str:
     try:
-        code = detect(s)
+        code = str(detect(s))
     except Exception:
         code = "en"
     if code.startswith("de"):
@@ -176,7 +207,6 @@ def get_local_engine(lang: str) -> LocalOrpheus:
         raise ValueError(f"local Orpheus only supports en/de, got {lang}")
     if _engine is not None and _engine_lang == lang:
         return _engine
-    # Drop previous language model to free Metal/RAM
     _engine = None
     _engine_lang = None
     _engine = LocalOrpheus(lang=lang, n_gpu_layers=N_GPU_LAYERS, n_ctx=N_CTX, verbose=False)
@@ -206,6 +236,7 @@ def speak_groq(s: str) -> None:
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         raise RuntimeError("GROQ_API_KEY not set")
+
     client = Groq(api_key=api_key, timeout=API_TIMEOUT_S)
     print(f"Groq fallback → {ORPHEUS_VOICE}")
     response = client.audio.speech.create(
@@ -229,8 +260,12 @@ def list_say_voices() -> list[tuple[str, str]]:
     return voices
 
 
-def say_voice_for(lang: str) -> str | None:
-    voices = list_say_voices()
+def say_voice_for(
+    lang: str,
+    voices: list[tuple[str, str]] | None = None,
+) -> str | None:
+    if voices is None:
+        voices = list_say_voices()
     installed = {name: code for name, code in voices}
     for name in SAY_PREFERRED.get(lang, []):
         if name in installed:
@@ -287,7 +322,41 @@ def speak(s: str) -> None:
         speak_groq_or_say(s, f"{type(e).__name__}: {e}")
 
 
-if __name__ == "__main__":
-    speak(text)
+def cli(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="speaker",
+        description="Local-first Orpheus TTS (EN/DE) with Groq and macOS say fallbacks",
+    )
+    parser.add_argument(
+        "text",
+        nargs="?",
+        default=None,
+        help="Text to speak (default: built-in sample)",
+    )
+    parser.add_argument(
+        "-f",
+        "--file",
+        type=Path,
+        help="Read text from a UTF-8 file",
+    )
+    args = parser.parse_args(argv)
+
+    if args.file is not None:
+        payload = args.file.read_text(encoding="utf-8").strip()
+    elif args.text is not None:
+        payload = args.text
+    else:
+        payload = DEFAULT_TEXT
+
+    if not payload:
+        print("No text to speak.", file=sys.stderr)
+        return 2
+
+    speak(payload)
     if SPEECH_FILE.exists():
         time.sleep(DELETE_AFTER_S + 0.5)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli())

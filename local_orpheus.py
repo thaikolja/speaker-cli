@@ -1,8 +1,10 @@
 """Local Orpheus TTS via llama.cpp (Metal) + SNAC decoder."""
+
 from __future__ import annotations
 
 import platform
-from typing import Generator, Iterator, cast
+from collections.abc import Generator, Iterator
+from typing import cast
 
 import numpy as np
 import onnxruntime
@@ -23,7 +25,9 @@ CUSTOM_TOKEN_PREFIX = "<custom_token_"
 
 
 class LocalOrpheus:
-    def __init__(self, lang: str = "en", n_gpu_layers: int = -1, n_ctx: int = 2048, verbose: bool = False):
+    def __init__(
+        self, lang: str = "en", n_gpu_layers: int = -1, n_ctx: int = 2048, verbose: bool = False
+    ):
         if lang not in LANG_TO_REPO:
             raise ValueError(f"unsupported lang {lang!r}; want en|de")
         self.lang = lang
@@ -52,7 +56,11 @@ class LocalOrpheus:
             subfolder="onnx",
             filename="decoder_model.onnx",
         )
-        providers = [p for p in ("CoreMLExecutionProvider", "CPUExecutionProvider") if p in onnxruntime.get_available_providers()]
+        providers = [
+            p
+            for p in ("CoreMLExecutionProvider", "CPUExecutionProvider")
+            if p in onnxruntime.get_available_providers()
+        ]
         if not providers:
             providers = ["CPUExecutionProvider"]
         self._snac = onnxruntime.InferenceSession(snac_path, providers=providers)
@@ -99,9 +107,10 @@ class LocalOrpheus:
             return None
 
         names = [x.name for x in self._snac.get_inputs()]
-        audio_hat = self._snac.run(None, dict(zip(names, [c0, c1, c2])))[0]
+        audio_hat = self._snac.run(None, dict(zip(names, [c0, c1, c2], strict=True)))[0]
         audio_np = audio_hat[:, :, 2048:4096]
-        return (audio_np * 32767).astype(np.int16).tobytes()
+        out = (audio_np * 32767).astype(np.int16).tobytes()
+        return bytes(out)
 
     def _decode(self, token_gen: Generator[str, None, None]) -> Generator[bytes, None, None]:
         buffer: list[int] = []
@@ -116,7 +125,9 @@ class LocalOrpheus:
                     if audio is not None:
                         yield audio
 
-    def _token_gen(self, text: str, voice_id: str, max_tokens: int = 2048) -> Generator[str, None, None]:
+    def _token_gen(
+        self, text: str, voice_id: str, max_tokens: int = 2048
+    ) -> Generator[str, None, None]:
         prompt = f"<|audio|>{voice_id}: {text}<|eot_id|><custom_token_4>"
         stream = self._llm(
             prompt,
