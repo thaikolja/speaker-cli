@@ -12,6 +12,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### docs
 - (chore) fixed README: CI/Python/License/Ruff badges
 - (docs) available models table (local EN/DE GGUF, Groq, macOS say) in README
+- (docs) concise module/public API pydocs in `main.py` and `local_orpheus.py` (no restating inline comments)
+- (docs) header docs on `scripts/install_metal.sh`
+
+### fix
+- (fix) SNAC decoder defaults to CPU to avoid macOS CoreAnalytics "Context leak" console spam; set `SPEAKER_USE_COREML=1` to opt back in
 
 ## [0.0.1] — 2026-07-25
 

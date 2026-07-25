@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
-# Build llama-cpp-python with Apple Metal for local Orpheus on M-series Macs.
+#
+# install_metal.sh — llama-cpp-python with Apple Metal for local Orpheus
+#
+# Purpose: enable Metal-backed GGUF inference used by local_orpheus.py.
+# Run after each fresh `uv sync --extra dev` on macOS (not in the lockfile).
+#
+# Usage:
+#   ./scripts/install_metal.sh
+#   make install-metal
+#
+# Exit: 0 success; 1 not Darwin or install failure.
+#
+
 set -euo pipefail
+
 cd "$(dirname "$0")/.."
 
 if [[ "$(uname -s)" != "Darwin" ]]; then

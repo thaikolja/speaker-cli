@@ -1,3 +1,19 @@
+"""speaker — local-first Orpheus TTS CLI with cloud and system fallbacks.
+
+Priority: local Orpheus (EN/DE) → Groq Orpheus API (``troy``) → macOS ``say``.
+
+Environment Variables
+    ---------------------
+    * ``GROQ_API_KEY`` — optional; required only for the Groq path.
+    * Values from a project ``.env`` are loaded at import time.
+
+CLI::
+
+    python main.py "Hello world"
+    python main.py -f notes.txt
+    speaker "Guten Tag"
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -25,15 +41,13 @@ ROOT = Path(__file__).resolve().parent
 SPEECH_FILE = ROOT / "speech.wav"
 USAGE_FILE = ROOT / ".groq_usage.json"
 
-# --- Local Orpheus (default) ---
-# EN OSS voices: tara, leah, jess, leo, dan, mia, zac, zoe  (no Groq "troy")
+# Local Orpheus — EN tags: tara, leah, jess, leo, dan, mia, zac, zoe (no "troy")
 LOCAL_VOICE_EN = "leo"
 LOCAL_VOICE_DE = "leo"
 N_GPU_LAYERS = -1
 N_CTX = 2048
 
-# --- Groq optional fallback ---
-# https://console.groq.com/docs/rate-limits
+# Groq fallback — https://console.groq.com/docs/rate-limits
 # https://console.groq.com/docs/text-to-speech/orpheus
 ORPHEUS_MODEL = "canopylabs/orpheus-v1-english"
 ORPHEUS_VOICE = "troy"
@@ -83,10 +97,15 @@ _engine_lang: str | None = None
 
 
 def estimate_tokens(s: str) -> int:
+    """Rough token estimate for Groq pre-checks (~4 characters per token).
+
+    Always returns at least ``1``, including for the empty string.
+    """
     return max(1, (len(s) + 3) // 4)
 
 
 def load_usage(path: Path = USAGE_FILE) -> list[dict]:
+    """Load Groq usage events, dropping entries older than 24 hours."""
     if not path.is_file():
         return []
     try:
@@ -98,12 +117,14 @@ def load_usage(path: Path = USAGE_FILE) -> list[dict]:
 
 
 def save_usage(events: list[dict], path: Path = USAGE_FILE) -> None:
+    """Persist usage events after pruning anything older than 24 hours."""
     cutoff = time.time() - 86400
     events = [e for e in events if e.get("ts", 0) >= cutoff]
     path.write_text(json.dumps({"events": events}, indent=2))
 
 
 def record_usage(tokens: int, path: Path = USAGE_FILE) -> None:
+    """Append one successful Groq call to the usage ledger."""
     events = load_usage(path)
     events.append({"ts": time.time(), "tokens": tokens})
     save_usage(events, path)
@@ -120,6 +141,13 @@ def fits_groq_limits(
     tpd: int = ORPHEUS_TPD,
     now: float | None = None,
 ) -> tuple[bool, str]:
+    """Whether ``s`` may be sent to Groq under char and rate limits.
+
+    Returns
+    -------
+    ok, reason
+        ``(True, "ok")`` or ``(False, human-readable reason)``.
+    """
     if len(s) > max_chars:
         return False, f"input {len(s)} chars > {max_chars} max"
     tokens = estimate_tokens(s)
@@ -140,6 +168,8 @@ def fits_groq_limits(
 
 
 def cleanup_speech(path: Path = SPEECH_FILE, delay_s: float = DELETE_AFTER_S) -> None:
+    """Delete ``path`` now (``delay_s <= 0``) or after ``delay_s`` seconds."""
+
     def _delete() -> None:
         if delay_s > 0:
             time.sleep(delay_s)
@@ -153,6 +183,7 @@ def cleanup_speech(path: Path = SPEECH_FILE, delay_s: float = DELETE_AFTER_S) ->
 
 
 def write_wav_mono_i16(path: Path, sample_rate: int, audio: np.ndarray) -> None:
+    """Write mono 16-bit PCM WAV (e.g. for ``afplay``)."""
     audio = np.ascontiguousarray(np.asarray(audio).squeeze(), dtype=np.int16)
     if audio.ndim != 1:
         audio = audio.reshape(-1)
@@ -164,6 +195,7 @@ def write_wav_mono_i16(path: Path, sample_rate: int, audio: np.ndarray) -> None:
 
 
 def play_wav(path: Path) -> None:
+    """Play a WAV via ``afplay`` (retries), then ``ffplay`` if needed."""
     path = path.resolve()
     last_err: Exception | None = None
     for _ in range(3):
@@ -185,11 +217,13 @@ def play_wav(path: Path) -> None:
 
 
 def play_and_cleanup(path: Path = SPEECH_FILE) -> None:
+    """Play ``path`` then schedule delayed deletion."""
     play_wav(path)
     cleanup_speech(path, DELETE_AFTER_S)
 
 
 def lang_code(s: str) -> str:
+    """Return ``de``, ``en``, or the raw langdetect code for other languages."""
     try:
         code = str(detect(s))
     except Exception:
@@ -202,6 +236,7 @@ def lang_code(s: str) -> str:
 
 
 def get_local_engine(lang: str) -> LocalOrpheus:
+    """Return a cached :class:`LocalOrpheus` for ``lang`` (one model resident)."""
     global _engine, _engine_lang
     if lang not in ("en", "de"):
         raise ValueError(f"local Orpheus only supports en/de, got {lang}")
@@ -215,6 +250,7 @@ def get_local_engine(lang: str) -> LocalOrpheus:
 
 
 def speak_local_orpheus(s: str, lang: str) -> None:
+    """Synthesize with local Orpheus, play, and schedule WAV cleanup."""
     voice = LOCAL_VOICE_EN if lang == "en" else LOCAL_VOICE_DE
     engine = get_local_engine(lang)
     print(f"Local Orpheus → lang={lang} voice={voice}")
@@ -233,6 +269,7 @@ def speak_local_orpheus(s: str, lang: str) -> None:
 
 
 def speak_groq(s: str) -> None:
+    """Synthesize via Groq Orpheus API, play, record usage, cleanup."""
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         raise RuntimeError("GROQ_API_KEY not set")
@@ -251,6 +288,7 @@ def speak_groq(s: str) -> None:
 
 
 def list_say_voices() -> list[tuple[str, str]]:
+    """Parse ``say -v ?`` into ``(voice_name, lang_REGION)`` pairs."""
     out = subprocess.check_output(["say", "-v", "?"], text=True)
     voices: list[tuple[str, str]] = []
     for line in out.strip().splitlines():
@@ -264,6 +302,7 @@ def say_voice_for(
     lang: str,
     voices: list[tuple[str, str]] | None = None,
 ) -> str | None:
+    """Best installed macOS ``say`` voice for ``lang``, or ``None``."""
     if voices is None:
         voices = list_say_voices()
     installed = {name: code for name, code in voices}
@@ -280,6 +319,7 @@ def say_voice_for(
 
 
 def speak_say(s: str, reason: str) -> None:
+    """Speak with macOS ``say`` and log why this fallback was used."""
     lang = lang_code(s)
     voice = say_voice_for(lang if lang in ("en", "de") else "en")
     print(f"macOS say fallback ({reason})")
@@ -291,6 +331,7 @@ def speak_say(s: str, reason: str) -> None:
 
 
 def speak_groq_or_say(s: str, why_local_failed: str) -> None:
+    """Try Groq when limits allow; otherwise use macOS ``say``."""
     ok, reason = fits_groq_limits(s)
     if not ok:
         speak_say(s, f"after local fail ({why_local_failed}); groq skipped: {reason}")
@@ -311,11 +352,11 @@ def speak_groq_or_say(s: str, why_local_failed: str) -> None:
 
 
 def speak(s: str) -> None:
+    """Speak ``s``: local Orpheus, then Groq, then ``say``."""
     lang = lang_code(s)
     if lang not in ("en", "de"):
         speak_groq_or_say(s, f"unsupported lang '{lang}' for local Orpheus")
         return
-
     try:
         speak_local_orpheus(s, lang)
     except Exception as e:
@@ -323,6 +364,7 @@ def speak(s: str) -> None:
 
 
 def cli(argv: list[str] | None = None) -> int:
+    """Parse CLI args and speak. Returns process exit code."""
     parser = argparse.ArgumentParser(
         prog="speaker",
         description="Local-first Orpheus TTS (EN/DE) with Groq and macOS say fallbacks",

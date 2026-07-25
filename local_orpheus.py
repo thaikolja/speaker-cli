@@ -1,7 +1,19 @@
-"""Local Orpheus TTS via llama.cpp (Metal) + SNAC decoder."""
+"""Local Orpheus TTS via llama.cpp (Metal) and SNAC audio decode.
+
+Loads quantized Orpheus GGUF weights from Hugging Face, generates tokens with
+llama-cpp-python, and decodes SNAC codebook tokens to 24 kHz mono PCM.
+
+Supported languages: ``en``, ``de``.
+
+Example::
+
+    engine = LocalOrpheus(lang="en")
+    sample_rate, samples = engine.tts("Hello world", voice_id="leo")
+"""
 
 from __future__ import annotations
 
+import os
 import platform
 from collections.abc import Generator, Iterator
 from typing import cast
@@ -12,22 +24,53 @@ from huggingface_hub import hf_hub_download
 from llama_cpp import CreateCompletionStreamResponse, Llama
 from numpy.typing import NDArray
 
+# Suppress verbose ONNX Runtime / CoreML provider scan logs.
+# Set SPEAKER_ORT_VERBOSE=1 to see them again for debugging.
+if not os.environ.get("SPEAKER_ORT_VERBOSE"):
+    onnxruntime.set_default_logger_severity(3)
+
+# Default SNAC decode to CPU to avoid macOS CoreAnalytics "Context leak" spam.
+# Set SPEAKER_USE_COREML=1 to try the CoreML execution provider anyway.
+_USE_COREML = os.environ.get("SPEAKER_USE_COREML") == "1"
+
 LANG_TO_REPO = {
     "en": "isaiahbjork/orpheus-3b-0.1-ft-Q4_K_M-GGUF",
     "de": "freddyaboulton/3b-de-ft-research_release-Q4_K_M-GGUF",
 }
 
-# Public finetune voice tags (EN). DE research model accepts the same prompt format;
-# "leo"/"dan" still produce usable DE speech on the DE weights.
+# EN tags: tara, leah, jess, leo, dan, mia, zac, zoe. DE uses the same format.
 DEFAULT_VOICE = {"en": "leo", "de": "leo"}
 
 CUSTOM_TOKEN_PREFIX = "<custom_token_"
 
 
 class LocalOrpheus:
+    """Run Orpheus TTS locally with llama.cpp and an ONNX SNAC decoder.
+
+    Parameters
+    ----------
+    lang :
+        ``en`` or ``de`` (keys of :data:`LANG_TO_REPO`).
+    n_gpu_layers :
+        Layers to offload; ``-1`` = all. On Apple Silicon, ``0`` becomes ``-1``.
+    n_ctx :
+        Context length in tokens.
+    verbose :
+        Forwarded to :class:`llama_cpp.Llama`.
+
+    Raises
+    ------
+    ValueError
+        If ``lang`` is not supported.
+    """
+
     def __init__(
-        self, lang: str = "en", n_gpu_layers: int = -1, n_ctx: int = 2048, verbose: bool = False
-    ):
+        self,
+        lang: str = "en",
+        n_gpu_layers: int = -1,
+        n_ctx: int = 2048,
+        verbose: bool = False,
+    ) -> None:
         if lang not in LANG_TO_REPO:
             raise ValueError(f"unsupported lang {lang!r}; want en|de")
         self.lang = lang
@@ -38,7 +81,6 @@ class LocalOrpheus:
         print(f"Loading local Orpheus ({lang}) from {repo_id} …")
         model_path = hf_hub_download(repo_id=repo_id, filename=filename)
 
-        # Apple Silicon: full Metal offload
         if platform.system() == "Darwin" and platform.machine() == "arm64" and n_gpu_layers == 0:
             n_gpu_layers = -1
 
@@ -56,16 +98,24 @@ class LocalOrpheus:
             subfolder="onnx",
             filename="decoder_model.onnx",
         )
-        providers = [
-            p
-            for p in ("CoreMLExecutionProvider", "CPUExecutionProvider")
-            if p in onnxruntime.get_available_providers()
-        ]
+        if _USE_COREML:
+            providers = [
+                p
+                for p in ("CoreMLExecutionProvider", "CPUExecutionProvider")
+                if p in onnxruntime.get_available_providers()
+            ]
+        else:
+            providers = ["CPUExecutionProvider"]
         if not providers:
             providers = ["CPUExecutionProvider"]
         self._snac = onnxruntime.InferenceSession(snac_path, providers=providers)
 
     def _token_to_id(self, token_text: str, index: int) -> int | None:
+        """Parse a stream fragment into a raw SNAC codebook index, or ``None``.
+
+        The returned integer is the de-offset codebook value and may be
+        non-positive; callers must filter (see :meth:`_decode`).
+        """
         token_string = token_text.strip()
         last = token_string.rfind(CUSTOM_TOKEN_PREFIX)
         if last == -1:
@@ -80,6 +130,7 @@ class LocalOrpheus:
         return None
 
     def _convert_to_audio(self, multiframe: list[int]) -> bytes | None:
+        """Decode SNAC codes to raw int16 PCM bytes, or ``None`` if invalid."""
         if len(multiframe) < 28:
             return None
         num_frames = len(multiframe) // 7
@@ -113,6 +164,7 @@ class LocalOrpheus:
         return bytes(out)
 
     def _decode(self, token_gen: Generator[str, None, None]) -> Generator[bytes, None, None]:
+        """Yield PCM chunks from streamed LLM text tokens."""
         buffer: list[int] = []
         count = 0
         for token_text in token_gen:
@@ -128,6 +180,7 @@ class LocalOrpheus:
     def _token_gen(
         self, text: str, voice_id: str, max_tokens: int = 2048
     ) -> Generator[str, None, None]:
+        """Stream llama.cpp completion fragments for an Orpheus TTS prompt."""
         prompt = f"<|audio|>{voice_id}: {text}<|eot_id|><custom_token_4>"
         stream = self._llm(
             prompt,
@@ -143,6 +196,22 @@ class LocalOrpheus:
             yield token["choices"][0]["text"]
 
     def tts(self, text: str, voice_id: str | None = None) -> tuple[int, NDArray[np.int16]]:
+        """Synthesize ``text`` to mono int16 PCM at 24 kHz.
+
+        Parameters
+        ----------
+        text :
+            Text to speak.
+        voice_id :
+            Speaker tag; defaults to :attr:`voice_default`.
+
+        Returns
+        -------
+        sample_rate :
+            Always ``24000``.
+        samples :
+            Mono int16 waveform (empty if nothing was decoded).
+        """
         voice = voice_id or self.voice_default
         chunks: list[np.ndarray] = []
         for audio_bytes in self._decode(self._token_gen(text, voice)):
