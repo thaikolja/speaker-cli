@@ -148,9 +148,108 @@ def test_cli_empty_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert main.cli(["-f", str(empty)]) == 2
 
 
+def test_cli_no_args() -> None:
+    assert main.cli([]) == 2
+
+
 def test_cli_text_arg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     seen: list[str] = []
     monkeypatch.setattr(main, "speak", lambda s: seen.append(s))
     monkeypatch.setattr(main, "SPEECH_FILE", tmp_path / "missing.wav")
     assert main.cli(["Hello there"]) == 0
     assert seen == ["Hello there"]
+
+
+def test_preflight_groq_missing_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    ok, reason = main.preflight_groq()
+    assert ok is False
+    assert "GROQ_API_KEY" in reason
+
+
+def test_preflight_groq_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
+
+    class Boom:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        @property
+        def models(self) -> object:
+            raise ConnectionError("offline")
+
+    monkeypatch.setattr(main, "Groq", Boom)
+    ok, reason = main.preflight_groq(timeout_s=0.1)
+    assert ok is False
+    assert "unreachable" in reason
+
+
+def test_preflight_groq_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
+
+    class Models:
+        def list(self) -> list[str]:
+            return ["ok"]
+
+    class Client:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.models = Models()
+
+    monkeypatch.setattr(main, "Groq", Client)
+    ok, reason = main.preflight_groq()
+    assert ok is True
+    assert reason == "ok"
+
+
+def test_speak_prefers_groq_when_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    order: list[str] = []
+    monkeypatch.setattr(main, "lang_code", lambda _s: "en")
+    monkeypatch.setattr(main, "preflight_groq", lambda **_k: (True, "ok"))
+    monkeypatch.setattr(main, "fits_groq_limits", lambda _s, **_k: (True, "ok"))
+    monkeypatch.setattr(main, "speak_groq", lambda _s: order.append("groq"))
+    monkeypatch.setattr(main, "speak_local_orpheus", lambda _s, _l: order.append("local"))
+    monkeypatch.setattr(main, "speak_say", lambda _s, _r: order.append("say"))
+    main.speak("Hello friend, how are you today?")
+    assert order == ["groq"]
+
+
+def test_speak_local_when_preflight_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    order: list[str] = []
+    monkeypatch.setattr(main, "lang_code", lambda _s: "en")
+    monkeypatch.setattr(main, "preflight_groq", lambda **_k: (False, "GROQ_API_KEY not set"))
+    monkeypatch.setattr(main, "speak_groq", lambda _s: order.append("groq"))
+    monkeypatch.setattr(main, "speak_local_orpheus", lambda _s, _l: order.append("local"))
+    monkeypatch.setattr(main, "speak_say", lambda _s, _r: order.append("say"))
+    main.speak("Hello friend, how are you today?")
+    assert order == ["local"]
+
+
+def test_speak_local_then_say_when_groq_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    order: list[str] = []
+    monkeypatch.setattr(main, "lang_code", lambda _s: "en")
+    monkeypatch.setattr(main, "preflight_groq", lambda **_k: (True, "ok"))
+    monkeypatch.setattr(main, "fits_groq_limits", lambda _s, **_k: (True, "ok"))
+
+    def boom(_s: str) -> None:
+        order.append("groq")
+        raise RuntimeError("api down")
+
+    def local_fail(_s: str, _l: str) -> None:
+        order.append("local")
+        raise RuntimeError("no metal")
+
+    monkeypatch.setattr(main, "speak_groq", boom)
+    monkeypatch.setattr(main, "speak_local_orpheus", local_fail)
+    monkeypatch.setattr(main, "speak_say", lambda _s, _r: order.append("say"))
+    main.speak("Hello friend, how are you today?")
+    assert order == ["groq", "local", "say"]
+
+
+def test_speak_skips_local_for_unsupported_lang(monkeypatch: pytest.MonkeyPatch) -> None:
+    order: list[str] = []
+    monkeypatch.setattr(main, "lang_code", lambda _s: "fr")
+    monkeypatch.setattr(main, "preflight_groq", lambda **_k: (False, "GROQ_API_KEY not set"))
+    monkeypatch.setattr(main, "speak_local_orpheus", lambda _s, _l: order.append("local"))
+    monkeypatch.setattr(main, "speak_say", lambda _s, _r: order.append("say"))
+    main.speak("Bonjour tout le monde aujourd'hui")
+    assert order == ["say"]

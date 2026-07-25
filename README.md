@@ -2,25 +2,57 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/kolja/speaker/ci.yml?branch=main&label=CI)](../../actions/workflows/ci.yml) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE) [![Ruff](https://img.shields.io/badge/code%20style-ruff-000000?logo=ruff)](https://docs.astral.sh/ruff/)
 
-Local-first **text-to-speech** for **English** and **German**.
-
-Default path runs [Orpheus](https://github.com/canopyai/Orpheus-TTS) **on your machine** (Apple Silicon Metal via llama.cpp). If local inference fails, it falls back to the [Groq Orpheus API](https://console.groq.com/docs/text-to-speech/orpheus), then to macOS `say`.
+Easy **text-to-speech** CLI for **English** and **German**.
 
 ```
-text → local Orpheus (EN/DE)
+text → Groq Orpheus (troy)          # if API key set + reachable
+         ↓ fail / unreachable / over limit
+       local Orpheus (EN/DE)        # Metal + GGUF on first use
          ↓ fail
-       Groq troy (rate-limited, ≤200 chars)
-         ↓ fail / over limit
        macOS say (Samantha / Anna)
 ```
+
+## Quick start (recommended)
+
+Global `speak` command via [uv](https://docs.astral.sh/uv/) (Python **3.11+**):
+
+```bash
+uv tool install git+https://github.com/thaikolja/speaker-cli.git
+# or: pipx install git+https://github.com/thaikolja/speaker-cli.git
+
+export GROQ_API_KEY=gsk_your_key_here   # https://console.groq.com
+speak "Hello from Groq."
+speak "Guten Tag, das ist ein Test."
+speak -f notes.txt
+```
+
+With a working `GROQ_API_KEY`, **no model download and no Metal install** are required.
+
+> Groq Orpheus accepts at most **200 characters** and is rate-limited. Longer text or a down API falls through to local / `say`.
+
+## Offline / local Orpheus (optional)
+
+When Groq is unavailable, `speak` tries **local** Orpheus for EN/DE (downloads ~2 GB GGUF per language on first use):
+
+```bash
+git clone https://github.com/thaikolja/speaker-cli.git
+cd speaker-cli
+uv sync --extra dev
+./scripts/install_metal.sh          # Apple Silicon Metal llama.cpp
+uv run speak "Hello offline."
+```
+
+Models land in the Hugging Face cache (`~/.cache/huggingface/hub/` by default), not in this repo.
+
+To use local quality from a global `uv tool` install, install Metal `llama-cpp-python` into that tool environment as well (or run from a clone as above). Without Metal, local fails and macOS `say` is used.
 
 ## Available models
 
 | Path | Language | Model ID / asset | Default voice | Notes |
 |------|----------|------------------|---------------|--------|
-| **Local (default)** | English | [`isaiahbjork/orpheus-3b-0.1-ft-Q4_K_M-GGUF`](https://huggingface.co/isaiahbjork/orpheus-3b-0.1-ft-Q4_K_M-GGUF) | `leo` | ~2.2 GB Q4_K_M GGUF |
-| **Local (default)** | German | [`freddyaboulton/3b-de-ft-research_release-Q4_K_M-GGUF`](https://huggingface.co/freddyaboulton/3b-de-ft-research_release-Q4_K_M-GGUF) | `leo` | ~2.0 GB Q4_K_M GGUF |
-| **Groq fallback** | English | `canopylabs/orpheus-v1-english` | `troy` | API; max **200** chars; rate-limited |
+| **Groq (default)** | English | `canopylabs/orpheus-v1-english` | `troy` | API; max **200** chars; rate-limited |
+| **Local fallback** | English | [`isaiahbjork/orpheus-3b-0.1-ft-Q4_K_M-GGUF`](https://huggingface.co/isaiahbjork/orpheus-3b-0.1-ft-Q4_K_M-GGUF) | `leo` | ~2.2 GB Q4_K_M GGUF |
+| **Local fallback** | German | [`freddyaboulton/3b-de-ft-research_release-Q4_K_M-GGUF`](https://huggingface.co/freddyaboulton/3b-de-ft-research_release-Q4_K_M-GGUF) | `leo` | ~2.0 GB Q4_K_M GGUF |
 | **macOS fallback** | EN / DE | system `say` | Samantha / Anna | always offline |
 
 ### Local Orpheus voice tags (EN weights)
@@ -29,47 +61,26 @@ text → local Orpheus (EN/DE)
 
 DE uses the German GGUF with the same tag format (default `leo`). Groq’s `troy` is **API-only** and not in the open weights.
 
-Configured in code: `LANG_TO_REPO` / `DEFAULT_VOICE` in [`local_orpheus.py`](local_orpheus.py), Groq constants in [`main.py`](main.py).
+Configured in code: Groq constants in [`main.py`](main.py), `LANG_TO_REPO` / `DEFAULT_VOICE` in [`local_orpheus.py`](local_orpheus.py).
 
 ## Requirements
 
 - macOS (playback uses `afplay`; `say` is the last-resort fallback)
 - Python **3.11+**
-- [uv](https://docs.astral.sh/uv/) (recommended) or pip
-- ~5 GB disk for EN + DE GGUF models (downloaded on first use)
-- Apple Silicon recommended (Metal acceleration)
-
-## Quick start
-
-```bash
-# clone
-git clone <your-repo-url> speaker && cd speaker
-
-# deps
-uv sync --extra dev
-
-# Metal llama.cpp (required for local Orpheus)
-./scripts/install_metal.sh
-
-# optional Groq fallback
-cp .env.example .env   # set GROQ_API_KEY
-
-# speak
-uv run python main.py "Hello, this is a local test."
-uv run python main.py "Guten Tag, das ist ein Test."
-uv run speaker -f notes.txt
-```
-
-First run per language downloads the GGUF listed under **Available models**.
+- [uv](https://docs.astral.sh/uv/) (recommended) or pipx / pip
+- `GROQ_API_KEY` for the easy cloud path
+- Optional: ~5 GB disk + Apple Silicon Metal for local EN + DE GGUF
 
 ## Configuration
 
 | Variable / constant | Meaning |
 |---------------------|---------|
-| `GROQ_API_KEY` | Optional API fallback |
+| `GROQ_API_KEY` | Primary cloud path (preflight: key + `models.list`) |
 | `LOCAL_VOICE_EN` / `LOCAL_VOICE_DE` | Local Orpheus voice tags (default `leo`) |
 | `ORPHEUS_VOICE` | Groq voice (default `troy`) |
 | `DELETE_AFTER_S` | Seconds before deleting `speech.wav` (default `10`) |
+
+Copy [`.env.example`](.env.example) to `.env` in the project (or export in your shell) when developing from a clone.
 
 ## Development
 
@@ -87,7 +98,7 @@ pre-commit run --all-files
 ### Project layout
 
 ```
-main.py              # CLI + fallback orchestration
+main.py              # CLI + Groq-first orchestration
 local_orpheus.py     # Metal/llama.cpp Orpheus engine (+ model IDs)
 tests/               # unit tests (no GPU/models required)
 scripts/             # install helpers

@@ -26,6 +26,7 @@ dev = [
 ]
 
 [project.scripts]
+speak = "main:cli"
 speaker = "main:cli"
 
 [build-system]

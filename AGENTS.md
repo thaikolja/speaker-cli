@@ -4,10 +4,10 @@ This file tells automated coding agents how to work in this repository.
 
 ## What this project is
 
-**speaker** is a local-first TTS CLI:
+**speaker** is a TTS CLI with command **`speak`**:
 
-1. **Default:** local Orpheus (EN/DE) via `local_orpheus.py` + llama.cpp Metal  
-2. **Fallback:** Groq Orpheus API (`troy`) with rate-limit pre-check  
+1. **Default:** Groq Orpheus API (`troy`) after key + reachability preflight  
+2. **Fallback:** local Orpheus (EN/DE) via `local_orpheus.py` + llama.cpp Metal  
 3. **Last resort:** macOS `say`
 
 Do not reverse that priority unless the user explicitly asks.
@@ -25,11 +25,11 @@ Do not reverse that priority unless the user explicitly asks.
 
 | Path | Role |
 |------|------|
-| `main.py` | CLI, rate limits, fallbacks, playback, cleanup |
+| `main.py` | CLI (`speak`), preflight, rate limits, fallbacks, playback, cleanup |
 | `local_orpheus.py` | Local GGUF Orpheus + SNAC decode |
 | `tests/` | Unit tests (no model download) |
 | `scripts/install_metal.sh` | Metal `llama-cpp-python` install |
-| `pyproject.toml` | deps + ruff/pytest/mypy config |
+| `pyproject.toml` | deps + ruff/pytest/mypy config; console scripts `speak` / `speaker` |
 
 ## Commands agents should run
 
@@ -48,13 +48,20 @@ Local full TTS (optional, slow, needs models):
 ```bash
 ./scripts/install_metal.sh
 uv run python main.py "Hello from the agent."
+# or: uv run speak "Hello from the agent."
+```
+
+End-user install (document in README):
+
+```bash
+uv tool install git+https://github.com/thaikolja/speaker-cli.git
 ```
 
 ## Testing expectations
 
-- Prefer **unit tests** for pure logic (`estimate_tokens`, `fits_groq_limits`, `lang_code`, WAV write, voice pick).
+- Prefer **unit tests** for pure logic (`estimate_tokens`, `fits_groq_limits`, `preflight_groq`, `lang_code`, WAV write, voice pick, `speak` order).
 - Mark anything needing network/GPU/audio as `@pytest.mark.integration` and **do not** require it in CI.
-- Mock `subprocess`, filesystem, and engines when testing orchestration.
+- Mock `subprocess`, filesystem, Groq client, and engines when testing orchestration.
 
 ## Code style
 
@@ -69,6 +76,7 @@ uv run python main.py "Hello from the agent."
 - Free-tier style limits encoded in `ORPHEUS_*` constants — update if docs change:  
   https://console.groq.com/docs/rate-limits  
   https://console.groq.com/docs/text-to-speech/orpheus
+- Preflight uses a cheap `models.list` (not TTS) with `PREFLIGHT_TIMEOUT_S`
 - Open-source voices ≠ Groq names (`troy` is API-only; local default is `leo`)
 - Delete generated audio after playback (`DELETE_AFTER_S`)
 
