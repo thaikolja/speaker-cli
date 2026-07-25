@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Tooling
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.dmypy.json
+.tox/
+.nox/
+
+# Secrets & local state
+.env
+.env.local
+.env.*.local
+!.env.example
+.groq_usage.json
+
+# Audio / models (generated or large)
+speech.wav
+speech.mp3
+*.wav
+!tests/fixtures/**
+models/
+bin/
+*.gguf
+*.onnx
+
+# Vendor clone (optional; models come from Hugging Face)
+Orpheus-TTS/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+.opencode/
