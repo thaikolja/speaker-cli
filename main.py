@@ -1,10 +1,13 @@
-"""speak — Groq-first Orpheus TTS CLI with local and system fallbacks.
+"""speak — Orpheus TTS CLI with selectable backends.
 
-Priority: Groq Orpheus API (``troy``) → local Orpheus (EN/DE) → macOS ``say``.
+Default priority (``SPEAK_ENGINE=auto``): Groq → local Orpheus (EN/DE) → macOS
+``say``. Force a single backend with ``SPEAK_ENGINE=groq|local|say``.
 
 Environment Variables
     ---------------------
-    * ``GROQ_API_KEY`` — primary path; without it (or if unreachable), local/say.
+    * ``GROQ_API_KEY`` — required for Groq (and for ``auto`` when using cloud).
+    * ``SPEAK_ENGINE`` / ``SPEAKER_ENGINE`` — ``auto`` | ``groq`` | ``local`` | ``say``.
+    * ``SPEAK_SPEED`` / ``ORPHEUS_SPEED`` — playback rate (client-side).
     * Loaded from the process env, then ``.env`` files (see :func:`load_env_files`).
 
 CLI::
@@ -96,6 +99,24 @@ ORPHEUS_TPD = 3600
 API_TIMEOUT_S = 30.0
 PREFLIGHT_TIMEOUT_S = 5.0
 DELETE_AFTER_S = 10.0
+
+# Backend selection: auto | groq | local | say (see :func:`speak_engine`)
+DEFAULT_SPEAK_ENGINE = "auto"
+SPEAK_ENGINES = frozenset({"auto", "groq", "local", "say"})
+_SPEAK_ENGINE_ALIASES = {
+    "auto": "auto",
+    "default": "auto",
+    "fallback": "auto",
+    "groq": "groq",
+    "cloud": "groq",
+    "api": "groq",
+    "local": "local",
+    "orpheus": "local",
+    "say": "say",
+    "macos": "say",
+    "macos_say": "say",
+    "mac": "say",
+}
 
 SAY_PREFERRED = {
     "en": ["Samantha", "Daniel"],
@@ -368,6 +389,27 @@ def groq_speech_speed() -> float:
     return max(ORPHEUS_SPEED_MIN, min(ORPHEUS_SPEED_MAX, speed))
 
 
+def speak_engine() -> str:
+    """Return the configured backend: ``auto``, ``groq``, ``local``, or ``say``.
+
+    Reads ``SPEAK_ENGINE`` or ``SPEAKER_ENGINE``. Unknown values fall back to
+    ``auto`` with a stderr warning.
+    """
+    load_env_files()
+    raw = os.environ.get("SPEAK_ENGINE") or os.environ.get("SPEAKER_ENGINE")
+    if raw is None or not str(raw).strip():
+        return DEFAULT_SPEAK_ENGINE
+    key = str(raw).strip().strip("'\"").lower().replace("-", "_").replace(" ", "_")
+    engine = _SPEAK_ENGINE_ALIASES.get(key)
+    if engine is None:
+        print(
+            f"Unknown SPEAK_ENGINE={raw!r}; use auto|groq|local|say. Using auto.",
+            file=sys.stderr,
+        )
+        return DEFAULT_SPEAK_ENGINE
+    return engine
+
+
 def preflight_groq(*, timeout_s: float = PREFLIGHT_TIMEOUT_S) -> tuple[bool, str]:
     """Check API key and that Groq is reachable (cheap ``models.list`` call).
 
@@ -445,11 +487,14 @@ def say_voice_for(
     return None
 
 
-def speak_say(s: str, reason: str) -> None:
-    """Speak with macOS ``say`` and log why this fallback was used."""
+def speak_say(s: str, reason: str = "") -> None:
+    """Speak with macOS ``say``. ``reason`` is logged when non-empty."""
     lang = lang_code(s)
     voice = say_voice_for(lang if lang in ("en", "de") else "en")
-    print(f"macOS say fallback ({reason})")
+    if reason:
+        print(f"macOS say ({reason})")
+    else:
+        print("macOS say")
     if voice:
         print(f"voice: {voice}")
         subprocess.run(["say", "-v", voice, s], check=True)
@@ -457,43 +502,81 @@ def speak_say(s: str, reason: str) -> None:
         subprocess.run(["say", s], check=True)
 
 
-def speak(s: str) -> None:
-    """Speak ``s``: Groq (if reachable), then local Orpheus EN/DE, then ``say``."""
-    reasons: list[str] = []
-    lang = lang_code(s)
-
+def _try_groq(s: str, *, forced: bool) -> tuple[bool, str]:
+    """Attempt Groq TTS. Returns ``(True, "")`` on success, else ``(False, reason)``."""
     ok, why = preflight_groq()
     if not ok:
-        reasons.append(f"groq skipped: {why}")
-    else:
-        limits_ok, limit_reason = fits_groq_limits(s)
-        if not limits_ok:
-            reasons.append(f"groq skipped: {limit_reason}")
-        else:
-            try:
-                speak_groq(s)
-                return
-            except RateLimitError as e:
-                reasons.append(f"groq rate limit: {e}")
-            except APITimeoutError as e:
-                reasons.append(f"groq timeout: {e}")
-            except APIConnectionError as e:
-                reasons.append(f"groq connection: {e}")
-            except APIStatusError as e:
-                reasons.append(f"groq status {e.status_code}")
-            except Exception as e:
-                reasons.append(f"groq {type(e).__name__}: {e}")
+        return False, why
+    limits_ok, limit_reason = fits_groq_limits(s)
+    if not limits_ok:
+        return False, limit_reason
+    try:
+        speak_groq(s)
+        return True, ""
+    except RateLimitError as e:
+        msg = f"rate limit: {e}"
+    except APITimeoutError as e:
+        msg = f"timeout: {e}"
+    except APIConnectionError as e:
+        msg = f"connection: {e}"
+    except APIStatusError as e:
+        msg = f"status {e.status_code}"
+    except Exception as e:
+        msg = f"{type(e).__name__}: {e}"
+    if forced:
+        raise RuntimeError(f"SPEAK_ENGINE=groq failed: {msg}") from None
+    return False, msg
 
-    if lang in ("en", "de"):
-        try:
-            if reasons:
-                print(f"Trying local Orpheus ({'; '.join(reasons)})…")
-            speak_local_orpheus(s, lang)
-            return
-        except Exception as e:
-            reasons.append(f"local {type(e).__name__}: {e}")
-    else:
-        reasons.append(f"local unsupported lang '{lang}'")
+
+def _try_local(s: str, lang: str, *, forced: bool, prior: str = "") -> tuple[bool, str]:
+    """Attempt local Orpheus. Returns ``(True, "")`` on success, else ``(False, reason)``."""
+    if lang not in ("en", "de"):
+        msg = f"unsupported lang '{lang}'"
+        if forced:
+            raise RuntimeError(f"SPEAK_ENGINE=local failed: {msg}")
+        return False, msg
+    try:
+        if prior:
+            print(f"Trying local Orpheus ({prior})…")
+        speak_local_orpheus(s, lang)
+        return True, ""
+    except Exception as e:
+        msg = f"{type(e).__name__}: {e}"
+        if forced:
+            raise RuntimeError(f"SPEAK_ENGINE=local failed: {msg}") from e
+        return False, msg
+
+
+def speak(s: str) -> None:
+    """Speak ``s`` using ``SPEAK_ENGINE`` (``auto`` | ``groq`` | ``local`` | ``say``)."""
+    engine = speak_engine()
+    lang = lang_code(s)
+
+    if engine == "groq":
+        ok, why = _try_groq(s, forced=True)
+        if not ok:
+            raise RuntimeError(f"SPEAK_ENGINE=groq failed: {why}")
+        return
+
+    if engine == "local":
+        _try_local(s, lang, forced=True)
+        return
+
+    if engine == "say":
+        speak_say(s, "SPEAK_ENGINE=say")
+        return
+
+    # auto: groq → local → say
+    reasons: list[str] = []
+    ok, why = _try_groq(s, forced=False)
+    if ok:
+        return
+    reasons.append(f"groq skipped: {why}")
+
+    ok, why = _try_local(s, lang, forced=False, prior="; ".join(reasons))
+    if ok:
+        return
+    reasons.append(f"local {why}")
 
     speak_say(s, "; ".join(reasons) if reasons else "all backends failed")
 
@@ -502,7 +585,9 @@ def cli(argv: list[str] | None = None) -> int:
     """Parse CLI args and speak. Returns process exit code."""
     parser = argparse.ArgumentParser(
         prog="speak",
-        description="Groq-first Orpheus TTS (EN/DE local + macOS say fallbacks)",
+        description=(
+            "TTS via Groq / local Orpheus / macOS say (set SPEAK_ENGINE=auto|groq|local|say)"
+        ),
     )
     parser.add_argument(
         "text",

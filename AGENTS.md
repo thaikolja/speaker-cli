@@ -6,11 +6,11 @@ This file tells automated coding agents how to work in this repository.
 
 **speaker** is a TTS CLI with command **`speak`**:
 
-1. **Default:** Groq Orpheus API (`troy`) after key + reachability preflight  
+1. **Default (`SPEAK_ENGINE=auto`):** Groq Orpheus API (`troy`) after key + reachability preflight  
 2. **Fallback:** local Orpheus (EN/DE) via `local_orpheus.py` + llama.cpp Metal  
 3. **Last resort:** macOS `say`
 
-Do not reverse that priority unless the user explicitly asks.
+User may force a single backend with `SPEAK_ENGINE=groq|local|say`. Do not change the default `auto` chain unless asked.
 
 ## Hard rules
 
