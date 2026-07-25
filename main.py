@@ -1,13 +1,19 @@
 """speak — Orpheus TTS CLI with selectable backends and JSON config.
 
-Default priority (``engine=auto``): Groq → local Orpheus (EN/DE) → macOS ``say``.
+Default priority (``engine=auto``), by language:
 
-Defaults and internals live in ``config.json`` (see :func:`config_paths`).
-CLI flags override the loaded config; all flags are optional.
+* **English:** Groq → local Orpheus → macOS ``say``
+* **German:** macOS ``say`` (native) → local Orpheus → Groq
+
+Force one backend for all languages with ``engine=groq|local|say``.
+
+Defaults live in ``config.json`` (see :func:`config_paths`). CLI flags override
+the loaded config; all flags are optional.
 
 CLI::
 
     speak "Hello world"
+    speak "Guten Tag"
     speak -f notes.txt --engine groq --speed 1.25
     speak --help
 """
@@ -789,10 +795,45 @@ def _try_local(s: str, lang: str, *, forced: bool, prior: str = "") -> tuple[boo
         return False, msg
 
 
+def _try_say(s: str, *, reason: str = "", forced: bool = False) -> tuple[bool, str]:
+    """Attempt macOS ``say``. Returns ``(True, "")`` on success."""
+    try:
+        speak_say(s, reason)
+        return True, ""
+    except Exception as e:
+        msg = f"{type(e).__name__}: {e}"
+        if forced:
+            raise RuntimeError(f"engine=say failed: {msg}") from e
+        return False, msg
+
+
+def _speak_chain(s: str, loc: str, order: list[str]) -> None:
+    """Try backends in ``order`` (``groq`` | ``local`` | ``say``) until one works."""
+    reasons: list[str] = []
+    for backend in order:
+        if backend == "groq":
+            ok, why = _try_groq(s, forced=False)
+            if ok:
+                return
+            reasons.append(f"groq skipped: {why}")
+        elif backend == "local":
+            prior = "; ".join(reasons)
+            ok, why = _try_local(s, loc, forced=False, prior=prior)
+            if ok:
+                return
+            reasons.append(f"local {why}")
+        elif backend == "say":
+            reason = "; ".join(reasons) if reasons else "primary"
+            ok, why = _try_say(s, reason=reason, forced=False)
+            if ok:
+                return
+            reasons.append(f"say {why}")
+    raise RuntimeError("; ".join(reasons) if reasons else f"no backend succeeded for lang={loc}")
+
+
 def speak(s: str) -> None:
-    """Speak ``s`` using the active settings engine."""
+    """Speak ``s`` using the active settings engine (language-aware when auto)."""
     engine = speak_engine()
-    # Local path always en|de; auto chain uses local_lang for Orpheus too.
     loc = local_lang(s)
 
     if engine == "groq":
@@ -806,21 +847,14 @@ def speak(s: str) -> None:
         return
 
     if engine == "say":
-        speak_say(s, "engine=say")
+        _try_say(s, reason="engine=say", forced=True)
         return
 
-    reasons: list[str] = []
-    ok, why = _try_groq(s, forced=False)
-    if ok:
-        return
-    reasons.append(f"groq skipped: {why}")
-
-    ok, why = _try_local(s, loc, forced=False, prior="; ".join(reasons))
-    if ok:
-        return
-    reasons.append(f"local {why}")
-
-    speak_say(s, "; ".join(reasons) if reasons else "all backends failed")
+    # auto: English prioritizes Groq; German prioritizes native macOS say.
+    if loc == "de":
+        _speak_chain(s, loc, ["say", "local", "groq"])
+    else:
+        _speak_chain(s, loc, ["groq", "local", "say"])
 
 
 def build_parser(defaults: Settings) -> argparse.ArgumentParser:
@@ -828,8 +862,8 @@ def build_parser(defaults: Settings) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="speak",
         description=(
-            "Text-to-speech via Groq Orpheus, local Orpheus (EN/DE), or macOS say. "
-            f"Defaults load from config.json ({CONFIG_DIR / 'config.json'})."
+            "Text-to-speech: English prefers Groq, German prefers macOS say "
+            f"(engine=auto). Defaults: {CONFIG_DIR / 'config.json'}."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -846,7 +880,7 @@ def build_parser(defaults: Settings) -> argparse.ArgumentParser:
         "--engine",
         default=defaults.engine,
         choices=["auto", "groq", "local", "say"],
-        help="TTS backend",
+        help="TTS backend (auto: EN→Groq first, DE→macOS say first)",
     )
     parser.add_argument(
         "--speed",

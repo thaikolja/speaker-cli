@@ -6,11 +6,11 @@ This file tells automated coding agents how to work in this repository.
 
 **speak** is a TTS CLI (`speak` console script only):
 
-1. **Default (`engine=auto`):** Groq Orpheus API after key + reachability preflight  
-2. **Fallback:** local Orpheus (EN/DE) via `local_orpheus.py` + llama.cpp Metal  
-3. **Last resort:** macOS `say`
+1. **English (`engine=auto`):** Groq → local Orpheus → macOS `say`  
+2. **German (`engine=auto`):** macOS `say` (native) → local Orpheus → Groq  
+3. Forced `engine=groq|local|say` applies to all languages
 
-Defaults live in **`config.json`** (not `.env`). CLI flags override config. User may force `engine=groq|local|say`.
+Defaults live in **`config.json`**. CLI flags override config.
 
 ## Hard rules
 

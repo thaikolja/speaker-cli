@@ -5,11 +5,19 @@
 Easy **text-to-speech** CLI (`speak`) for **English** and **German**.
 
 ```
-text → Groq Orpheus (troy)          # if engine=auto and key + API ok
-         ↓ fail / unreachable / over limit
-       local Orpheus (EN/DE)        # Metal + GGUF on first use
-         ↓ fail
-       macOS say
+English (engine=auto):
+  text → Groq Orpheus (troy)
+           ↓ fail
+         local Orpheus (EN)
+           ↓ fail
+         macOS say
+
+German (engine=auto):
+  text → macOS say (Anna, …)        # native
+           ↓ fail
+         local Orpheus (DE)
+           ↓ fail
+         Groq
 ```
 
 ## Quick start
@@ -44,7 +52,7 @@ See [`config.example.json`](config.example.json). Important keys:
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `engine` | `auto` | `auto` \| `groq` \| `local` \| `say` |
+| `engine` | `auto` | `auto` (EN→Groq first, DE→macOS say first) \| `groq` \| `local` \| `say` |
 | `speed` | `1.0` | Pitch-preserving tempo (0.5–3.0) |
 | `groq_api_key` | `""` | Groq key (or env `GROQ_API_KEY` override) |
 | `groq_voice` | `troy` | Groq voice |
