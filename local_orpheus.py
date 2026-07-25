@@ -123,7 +123,7 @@ class LocalOrpheus:
         last_token = token_string[last:]
         if last_token.startswith(CUSTOM_TOKEN_PREFIX) and last_token.endswith(">"):
             try:
-                number_str = last_token[len(CUSTOM_TOKEN_PREFIX): -1]
+                number_str = last_token[len(CUSTOM_TOKEN_PREFIX) : -1]
                 return int(number_str) - 10 - ((index % 7) * 4096)
             except ValueError:
                 return None
