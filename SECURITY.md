@@ -12,8 +12,8 @@ Email the maintainer privately with:
 
 ## Secrets
 
-- Never commit `.env` or API keys
-- Use `.env.example` as a template only
+- Never commit `config.json` with real API keys (use `config.example.json` only)
+- Never print secrets in `--help` defaults or logs
 - Rotate any key that may have been exposed historically
 
 ## Scope

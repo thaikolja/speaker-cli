@@ -10,15 +10,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### feat
-- (feat) CLI entrypoint `speak` (alias `speaker`); intended global install via `uv tool install` / pipx
+- (feat) CLI is **`speak` only** (removed `speaker` alias) with full optional flags (shown in `--help`)
+- (feat) **`config.json`** for all defaults/internals (`~/.config/speak/config.json`); `--write-config` helper
 - (feat) Groq-first orchestration: key + reachability preflight (`models.list`), then local Orpheus EN/DE, then macOS `say`
+- (feat) `engine` = `auto` \| `groq` \| `local` \| `say` (config + `--engine`)
+- (feat) pitch-preserving `speed` (ffmpeg `atempo` or WSOLA; config + `--speed`)
 - (feat) `preflight_groq()` — cheap connectivity check before TTS
-- (feat) `SPEAK_SPEED` / `ORPHEUS_SPEED` (0.5–3.0) pitch-preserving tempo (ffmpeg `atempo` or WSOLA)
-- (feat) `SPEAK_ENGINE` / `SPEAKER_ENGINE` = `auto` \| `groq` \| `local` \| `say` to force a backend
+
+### breaking
+- (breaking) `.env` / `SPEAK_*` env defaults removed in favor of `config.json` (optional `GROQ_API_KEY` env still overrides key)
+- (breaking) removed console script `speaker`
 
 ### docs
-- (docs) README quick start for `speak` + Groq; Metal/local documented as optional offline path
-- (docs) AGENTS.md priority inverted to match product (Groq → local → say)
+- (docs) README for `speak` + `config.json`; Metal/local as optional offline path
+- (docs) AGENTS.md matches config.json product
 - (chore) fixed README: CI/Python/License/Ruff badges
 - (docs) available models table (local EN/DE GGUF, Groq, macOS say) in README
 - (docs) concise module/public API pydocs in `main.py` and `local_orpheus.py` (no restating inline comments)

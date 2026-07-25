@@ -1,19 +1,18 @@
 [project]
 name = "speaker"
 version = "0.0.1"
-description = "Local-first Orpheus TTS for English and German, with Groq and macOS say fallbacks"
+description = "speak CLI — Groq / local Orpheus TTS for English and German, with macOS say fallback"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [{ name = "Kolja" }]
-keywords = ["tts", "orpheus", "speech", "local", "groq"]
+keywords = ["tts", "orpheus", "speech", "local", "groq", "speak"]
 dependencies = [
   "groq>=1.6.0",
   "huggingface-hub>=0.20.0",
   "langdetect>=1.0.9",
   "numpy>=2.4.6",
   "onnxruntime>=1.27.0",
-  "python-dotenv>=1.2.2",
 ]
 
 [project.optional-dependencies]
@@ -27,7 +26,6 @@ dev = [
 
 [project.scripts]
 speak = "main:cli"
-speaker = "main:cli"
 
 [build-system]
 requires = ["hatchling"]
