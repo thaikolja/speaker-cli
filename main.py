@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from groq import APIConnectionError, APIStatusError, APITimeoutError, Groq, RateLimitError
-from langdetect import detect
 
 if TYPE_CHECKING:
     from local_orpheus import LocalOrpheus
@@ -541,16 +540,53 @@ def play_and_cleanup(path: Path | None = None) -> None:
 
 
 def lang_code(s: str) -> str:
-    """Return ``de``, ``en``, or the raw langdetect code for other languages."""
-    try:
-        code = str(detect(s))
-    except Exception:
-        code = "en"
-    if code.startswith("de"):
-        return "de"
-    if code.startswith("en"):
+    """Return ``de``, ``en``, or another langdetect code for long non-EN/DE text.
+
+    Short / low-confidence strings default to ``en`` — ``langdetect`` often
+    mislabels words like ``hello`` as Dutch/Finnish/etc.
+    """
+    text = (s or "").strip()
+    if not text:
         return "en"
-    return code
+    # Strong orthographic cue for German
+    if re.search(r"[äöüÄÖÜß]", text):
+        return "de"
+    try:
+        from langdetect import detect_langs
+
+        ranked = detect_langs(text)
+    except Exception:
+        return "en"
+    if not ranked:
+        return "en"
+
+    en_p = sum(p.prob for p in ranked if str(p.lang).startswith("en"))
+    de_p = sum(p.prob for p in ranked if str(p.lang).startswith("de"))
+
+    if de_p >= 0.55 and de_p >= en_p:
+        return "de"
+    if en_p >= 0.55:
+        return "en"
+
+    # Unreliable short input → default English (local/Groq EN path)
+    if len(text) < 48:
+        return "de" if de_p > en_p + 0.15 else "en"
+
+    top = str(ranked[0].lang).split("-")[0]
+    if top.startswith("de"):
+        return "de"
+    if top.startswith("en"):
+        return "en"
+    return top
+
+
+def local_lang(s: str) -> str:
+    """Language for local Orpheus: always ``en`` or ``de``."""
+    lang = lang_code(s)
+    if lang in ("en", "de"):
+        return lang
+    print(f"Local Orpheus: unsupported lang {lang!r}, using en", file=sys.stderr)
+    return "en"
 
 
 def get_local_engine(lang: str) -> LocalOrpheus:
@@ -695,8 +731,8 @@ def say_voice_for(
 
 def speak_say(s: str, reason: str = "") -> None:
     """Speak with macOS ``say``. ``reason`` is logged when non-empty."""
-    lang = lang_code(s)
-    voice = say_voice_for(lang if lang in ("en", "de") else "en")
+    lang = local_lang(s)
+    voice = say_voice_for(lang)
     if reason:
         print(f"macOS say ({reason})")
     else:
@@ -756,7 +792,8 @@ def _try_local(s: str, lang: str, *, forced: bool, prior: str = "") -> tuple[boo
 def speak(s: str) -> None:
     """Speak ``s`` using the active settings engine."""
     engine = speak_engine()
-    lang = lang_code(s)
+    # Local path always en|de; auto chain uses local_lang for Orpheus too.
+    loc = local_lang(s)
 
     if engine == "groq":
         ok, why = _try_groq(s, forced=True)
@@ -765,7 +802,7 @@ def speak(s: str) -> None:
         return
 
     if engine == "local":
-        _try_local(s, lang, forced=True)
+        _try_local(s, loc, forced=True)
         return
 
     if engine == "say":
@@ -778,7 +815,7 @@ def speak(s: str) -> None:
         return
     reasons.append(f"groq skipped: {why}")
 
-    ok, why = _try_local(s, lang, forced=False, prior="; ".join(reasons))
+    ok, why = _try_local(s, loc, forced=False, prior="; ".join(reasons))
     if ok:
         return
     reasons.append(f"local {why}")

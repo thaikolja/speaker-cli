@@ -104,6 +104,17 @@ def test_lang_code_german() -> None:
     assert main.lang_code("Guten Tag, wie geht es Ihnen heute? Das Wetter ist schön.") == "de"
 
 
+def test_lang_code_short_hello_is_english() -> None:
+    # langdetect alone often returns nl/fi for "hello"
+    assert main.lang_code("hello") == "en"
+    assert main.lang_code("Hello") == "en"
+    assert main.local_lang("hello") == "en"
+
+
+def test_lang_code_umlaut_is_german() -> None:
+    assert main.lang_code("Schön") == "de"
+
+
 def test_write_wav_mono_i16(tmp_path: Path) -> None:
     path = tmp_path / "out.wav"
     audio = np.array([0, 1000, -1000, 0], dtype=np.int16)
@@ -381,15 +392,22 @@ def test_speak_local_then_say_when_groq_raises(monkeypatch: pytest.MonkeyPatch) 
     assert order == ["groq", "local", "say"]
 
 
-def test_speak_skips_local_for_unsupported_lang(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_speak_maps_unsupported_lang_to_en_for_local(monkeypatch: pytest.MonkeyPatch) -> None:
     order: list[str] = []
+    langs: list[str] = []
     main.set_settings(main.Settings(engine="auto"))
     monkeypatch.setattr(main, "lang_code", lambda _s: "fr")
     monkeypatch.setattr(main, "preflight_groq", lambda **_k: (False, "no key"))
-    monkeypatch.setattr(main, "speak_local_orpheus", lambda _s, _l: order.append("local"))
+
+    def local(_s: str, lang: str) -> None:
+        langs.append(lang)
+        order.append("local")
+
+    monkeypatch.setattr(main, "speak_local_orpheus", local)
     monkeypatch.setattr(main, "speak_say", lambda _s, _r="": order.append("say"))
     main.speak("Bonjour tout le monde aujourd'hui")
-    assert order == ["say"]
+    assert order == ["local"]
+    assert langs == ["en"]
 
 
 def test_speak_engine_forced_say(monkeypatch: pytest.MonkeyPatch) -> None:
