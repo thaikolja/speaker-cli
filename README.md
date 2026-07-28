@@ -27,6 +27,7 @@ uv tool install git+https://github.com/thaikolja/speaker-cli.git
 
 # create config (all defaults + your API key)
 mkdir -p ~/.config/speak
+
 speak --write-config ~/.config/speak/config.json
 # edit groq_api_key, engine, speed, …
 
@@ -84,7 +85,7 @@ speak [text] [-f FILE] [--config PATH]
 
 ## Available models
 
-| Path | Language | Model / asset | Default voice |
+| Path | Language | Model/Asset | Default Voice |
 |------|----------|---------------|---------------|
 | **Groq** | English | `canopylabs/orpheus-v1-english` | `troy` (max **200** chars) |
 | **Local** | English | [`isaiahbjork/orpheus-3b-0.1-ft-Q4_K_M-GGUF`](https://huggingface.co/isaiahbjork/orpheus-3b-0.1-ft-Q4_K_M-GGUF) | `leo` |
@@ -93,7 +94,7 @@ speak [text] [-f FILE] [--config PATH]
 
 Local voice tags: `tara` · `leah` · `jess` · `leo` · `dan` · `mia` · `zac` · `zoe`
 
-## Offline / local Orpheus (optional)
+## Offline/local Orpheus (optional)
 
 ```bash
 git clone https://github.com/thaikolja/speaker-cli.git
