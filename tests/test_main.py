@@ -171,12 +171,30 @@ def test_cleanup_speech_immediate(tmp_path: Path) -> None:
     assert not path.exists()
 
 
-def test_cleanup_speech_delayed(tmp_path: Path) -> None:
+def test_cleanup_speech_delayed_is_non_blocking(tmp_path: Path) -> None:
+    # Delayed delete no longer sleeps inline; the file survives the call and is
+    # removed at interpreter exit (verified by test_cleanup_speech_deletes_on_exit).
     path = tmp_path / "speech.wav"
     path.write_bytes(b"x")
     main.cleanup_speech(path, delay_s=0.2)
     assert path.exists()
-    time.sleep(0.5)
+
+
+def test_cleanup_speech_deletes_on_exit(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    path = tmp_path / "speech.wav"
+    path.write_bytes(b"x")
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"from pathlib import Path; import main; "
+            f"main.cleanup_speech(Path({str(path)!r}), delay_s=0.2)",
+        ],
+        check=True,
+    )
     assert not path.exists()
 
 
@@ -221,6 +239,19 @@ def test_cli_engine_flag(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(main, "speak", capture)
     assert main.cli(["--engine", "say", "hi there friend"]) == 0
+    assert seen == ["say"]
+
+
+def test_cli_engine_alias_resolved(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    def capture(_s: str) -> None:
+        seen.append(main.get_settings().engine)
+
+    monkeypatch.setattr(main, "speak", capture)
+    # "macos" is an alias for "say"; argparse must not reject it and normalize_engine
+    # must resolve it before speak() runs.
+    assert main.cli(["--engine", "macos", "hi there friend"]) == 0
     assert seen == ["say"]
 
 

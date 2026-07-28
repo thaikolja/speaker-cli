@@ -21,6 +21,7 @@ CLI::
 from __future__ import annotations
 
 import argparse
+import atexit
 import contextlib
 import json
 import os
@@ -29,7 +30,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import wave
 from copy import deepcopy
@@ -318,21 +318,26 @@ def fits_groq_limits(
 
 
 def cleanup_speech(path: Path | None = None, delay_s: float | None = None) -> None:
-    """Delete ``path`` now (``delay_s <= 0``) or after ``delay_s`` seconds."""
+    """Delete ``path`` now (``delay_s <= 0``) or on interpreter exit.
+
+    The delayed path used to spawn a daemon thread that slept ``delay_s`` seconds,
+    forcing the CLI to block ~``delete_after_s`` after playback so the thread could
+    finish before the process exited. That hang is removed: delayed deletes now
+    run via ``atexit`` at normal interpreter shutdown — no blocking, no leak. The
+    ``delay_s`` argument is still honored for the immediate path (``<= 0``).
+    """
     cfg = get_settings()
     target = path if path is not None else cfg.speech_path()
     wait = cfg.delete_after_s if delay_s is None else delay_s
 
     def _delete() -> None:
-        if wait > 0:
-            time.sleep(wait)
         with contextlib.suppress(OSError):
             target.unlink(missing_ok=True)
 
     if wait <= 0:
-        target.unlink(missing_ok=True)
+        _delete()
         return
-    threading.Thread(target=_delete, daemon=True).start()
+    atexit.register(_delete)
 
 
 def write_wav_mono_i16(path: Path, sample_rate: int, audio: np.ndarray) -> None:
@@ -472,7 +477,13 @@ def _scale_wav_speed_ffmpeg(path: Path, speed: float) -> bool:
 
 
 def scale_wav_speed(path: Path, speed: float) -> None:
-    """Rewrite ``path`` to play at ``speed`` without changing pitch."""
+    """Rewrite ``path`` to play at ``speed``.
+
+    For 16-bit PCM (what Groq and local Orpheus produce) this is pitch-preserving
+    via ffmpeg ``atempo`` or a WSOLA fallback. Other sample widths only rewrite
+    the WAV framerate header, which resamples and shifts pitch — kept as a
+    best-effort fallback and not reached by the built-in backends.
+    """
     if speed <= 0:
         raise ValueError(f"speed must be positive, got {speed}")
     if abs(speed - 1.0) < 1e-3:
@@ -879,8 +890,10 @@ def build_parser(defaults: Settings) -> argparse.ArgumentParser:
     parser.add_argument(
         "--engine",
         default=defaults.engine,
-        choices=["auto", "groq", "local", "say"],
-        help="TTS backend (auto: EN→Groq first, DE→local Orpheus first)",
+        help=(
+            "TTS backend: auto|groq|local|say (auto: EN→Groq first, DE→local Orpheus "
+            "first). Aliases like macos/cloud/orpheus are accepted (see normalize_engine)."
+        ),
     )
     parser.add_argument(
         "--speed",
@@ -1057,9 +1070,6 @@ def cli(argv: list[str] | None = None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
 
-    speech = get_settings().speech_path()
-    if speech.exists():
-        time.sleep(get_settings().delete_after_s + 0.5)
     return 0
 
 

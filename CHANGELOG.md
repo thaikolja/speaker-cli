@@ -9,6 +9,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### fix
+- (fix) CLI no longer blocks ~10s after playback: `cleanup_speech` now deletes via `atexit` at interpreter exit (no daemon-thread sleep, no `time.sleep(delete_after_s + 0.5)` in `cli`) — the process exits the moment the voice finishes
+- (fix) `--engine` now accepts aliases (`macos`, `cloud`, `orpheus`, …) instead of rejecting them at argparse; `normalize_engine` resolves them consistently with `config.json`
+- (docs) `scale_wav_speed` docstring no longer claims pitch-preservation for non-16-bit WAVs (only the 16-bit path — Groq/local output — is pitch-preserving; other widths best-effort header resampling)
+
 ### feat
 - (feat) CLI is **`speak` only** (removed `speaker` alias) with full optional flags (shown in `--help`)
 - (feat) **`config.json`** for all defaults/internals (`~/.config/speak/config.json`); `--write-config` helper
