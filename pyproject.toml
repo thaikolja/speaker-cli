@@ -1,17 +1,18 @@
 [project]
 name = "speaker"
 version = "0.0.1"
-description = "Local-first Orpheus TTS for English and German, with Groq and macOS say fallbacks"
+description = "speak CLI — Groq / local Orpheus TTS for English and German, with macOS say fallback"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [{ name = "Kolja" }]
-keywords = ["tts", "orpheus", "speech", "local", "groq"]
+keywords = ["tts", "orpheus", "speech", "local", "groq", "speak"]
 dependencies = [
   "groq>=1.6.0",
   "huggingface-hub>=0.20.0",
   "langdetect>=1.0.9",
   "numpy>=2.4.6",
+  "onnxruntime>=1.27.0",
   "onnxruntime>=1.28.0",
   "python-dotenv>=1.2.2",
 ]
@@ -26,7 +27,7 @@ dev = [
 ]
 
 [project.scripts]
-speaker = "main:cli"
+speak = "main:cli"
 
 [build-system]
 requires = ["hatchling"]
@@ -80,7 +81,11 @@ markers = [
 omit = ["tests/*", "Orpheus-TTS/*"]
 
 [tool.mypy]
-python_version = "3.11"
+# Pinned to 3.12 (not the 3.11 floor) because numpy 2.x ships .pyi stubs that use
+# PEP 695 `type X = ...` aliases (3.12+ syntax); mypy targeting 3.11 can't parse
+# them and aborts. Real 3.11 compatibility is still guarded by the 3.11 runtime
+# job in CI. Keep >= supports-python in pyproject [project].
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true

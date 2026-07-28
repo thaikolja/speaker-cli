@@ -16,13 +16,15 @@ from __future__ import annotations
 import os
 import platform
 from collections.abc import Generator, Iterator
-from typing import cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import onnxruntime
 from huggingface_hub import hf_hub_download
-from llama_cpp import CreateCompletionStreamResponse, Llama
 from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+    from llama_cpp import CreateCompletionStreamResponse
 
 # Suppress verbose ONNX Runtime / CoreML provider scan logs.
 # Set SPEAKER_ORT_VERBOSE=1 to see them again for debugging.
@@ -42,6 +44,20 @@ LANG_TO_REPO = {
 DEFAULT_VOICE = {"en": "leo", "de": "leo"}
 
 CUSTOM_TOKEN_PREFIX = "<custom_token_"
+
+
+def _import_llama() -> Any:
+    """Import ``Llama`` only when local inference is used (optional Metal wheel)."""
+    try:
+        from llama_cpp import Llama
+    except ImportError as e:
+        raise RuntimeError(
+            "llama-cpp-python is required for local Orpheus. "
+            "On macOS Apple Silicon run ./scripts/install_metal.sh "
+            "(or install Metal llama-cpp-python into this environment). "
+            "Without it, use GROQ_API_KEY or macOS say."
+        ) from e
+    return Llama
 
 
 class LocalOrpheus:
@@ -84,7 +100,8 @@ class LocalOrpheus:
         if platform.system() == "Darwin" and platform.machine() == "arm64" and n_gpu_layers == 0:
             n_gpu_layers = -1
 
-        self._llm = Llama(
+        llama_cls = _import_llama()
+        self._llm = llama_cls(
             model_path=model_path,
             n_ctx=n_ctx,
             verbose=verbose,

@@ -5,7 +5,7 @@
 ```bash
 uv sync --extra dev
 ./scripts/install_metal.sh   # macOS local Orpheus
-cp .env.example .env         # optional Groq key
+speak --write-config ~/.config/speak/config.json   # then set groq_api_key
 pre-commit install
 ```
 

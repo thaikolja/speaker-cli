@@ -4,32 +4,34 @@ This file tells automated coding agents how to work in this repository.
 
 ## What this project is
 
-**speaker** is a local-first TTS CLI:
+**speak** is a TTS CLI (`speak` console script only):
 
-1. **Default:** local Orpheus (EN/DE) via `local_orpheus.py` + llama.cpp Metal  
-2. **Fallback:** Groq Orpheus API (`troy`) with rate-limit pre-check  
-3. **Last resort:** macOS `say`
+1. **English (`engine=auto`):** Groq → local Orpheus → macOS `say`  
+2. **German (`engine=auto`):** local Orpheus DE GGUF → Groq → macOS `say`  
+3. Forced `engine=groq|local|say` applies to all languages
 
-Do not reverse that priority unless the user explicitly asks.
+Defaults live in **`config.json`**. CLI flags override config.
 
 ## Hard rules
 
-- **Never commit secrets** (API keys, `.env`, tokens). Use `.env.example` only.
-- **Never re-hardcode `GROQ_API_KEY`** in source.
+- **Never commit secrets** (API keys, real `config.json` with keys). Use `config.example.json` only.
+- **Never re-hardcode API keys** in source.
 - **Do not expand language support** beyond EN/DE unless asked.
 - **Do not add heavy deps** (torch, vllm, piper, edge-tts) without a clear need — Mac path is llama.cpp + onnxruntime.
-- **Do not commit** `Orpheus-TTS/` clone, `*.gguf`, `speech.wav`, `.groq_usage.json`.
+- **Do not commit** `Orpheus-TTS/` clone, `*.gguf`, `speech.wav`, usage ledgers.
 - Keep responses and diffs **small**; match existing style (no drive-by refactors).
+- Console script is **`speak` only** (no `speaker` alias).
 
 ## Layout
 
 | Path | Role |
 |------|------|
-| `main.py` | CLI, rate limits, fallbacks, playback, cleanup |
+| `main.py` | CLI, `Settings` / config.json, orchestration, playback |
 | `local_orpheus.py` | Local GGUF Orpheus + SNAC decode |
+| `config.example.json` | Documented defaults |
 | `tests/` | Unit tests (no model download) |
 | `scripts/install_metal.sh` | Metal `llama-cpp-python` install |
-| `pyproject.toml` | deps + ruff/pytest/mypy config |
+| `pyproject.toml` | deps + ruff/pytest/mypy; script `speak` |
 
 ## Commands agents should run
 
@@ -41,20 +43,11 @@ uv run mypy main.py local_orpheus.py tests
 uv run pytest
 ```
 
-After changing Metal-related install notes, keep `scripts/install_metal.sh` accurate.
-
-Local full TTS (optional, slow, needs models):
-
-```bash
-./scripts/install_metal.sh
-uv run python main.py "Hello from the agent."
-```
-
 ## Testing expectations
 
-- Prefer **unit tests** for pure logic (`estimate_tokens`, `fits_groq_limits`, `lang_code`, WAV write, voice pick).
-- Mark anything needing network/GPU/audio as `@pytest.mark.integration` and **do not** require it in CI.
-- Mock `subprocess`, filesystem, and engines when testing orchestration.
+- Unit tests for pure logic and orchestration (mock engines / Groq).
+- Prefer isolated `Settings` in tests (`set_settings` / tmp paths).
+- Mark network/GPU/audio as `@pytest.mark.integration` — not required in CI.
 
 ## Code style
 
@@ -63,16 +56,17 @@ uv run python main.py "Hello from the agent."
 - No unnecessary comments
 - Type-annotate public functions
 
-## Product constraints to remember
+## Product constraints
 
-- Groq Orpheus input **max 200 characters**
-- Free-tier style limits encoded in `ORPHEUS_*` constants — update if docs change:  
+- Groq Orpheus input **max 200 characters** (configurable via `groq_max_chars`)
+- Free-tier style limits in Settings / config — update if docs change  
   https://console.groq.com/docs/rate-limits  
   https://console.groq.com/docs/text-to-speech/orpheus
-- Open-source voices ≠ Groq names (`troy` is API-only; local default is `leo`)
-- Delete generated audio after playback (`DELETE_AFTER_S`)
+- Tempo is pitch-preserving (ffmpeg `atempo` or WSOLA)
+- Open-source voices ≠ Groq names (`troy` is API-only; local default `leo`)
+- Delete generated audio after playback (`delete_after_s`)
 
-## PR checklist for agents
+## PR checklist
 
 1. `ruff check` + `ruff format` clean  
 2. `pytest` green  

@@ -9,13 +9,30 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### feat
+- (feat) CLI is **`speak` only** (removed `speaker` alias) with full optional flags (shown in `--help`)
+- (feat) **`config.json`** for all defaults/internals (`~/.config/speak/config.json`); `--write-config` helper
+- (feat) language-aware `engine=auto`: **English** Groq→local→say; **German** local DE Orpheus→Groq→say
+- (feat) Groq reachability preflight (`models.list`) before cloud TTS
+- (feat) `engine` = `auto` \| `groq` \| `local` \| `say` (config + `--engine`)
+- (feat) pitch-preserving `speed` (ffmpeg `atempo` or WSOLA; config + `--speed`)
+- (feat) `preflight_groq()` — cheap connectivity check before TTS
+
+### breaking
+- (breaking) `.env` / `SPEAK_*` env defaults removed in favor of `config.json` (optional `GROQ_API_KEY` env still overrides key)
+- (breaking) removed console script `speaker`
+
 ### docs
+- (docs) README for `speak` + `config.json`; Metal/local as optional offline path
+- (docs) AGENTS.md matches config.json product
 - (chore) fixed README: CI/Python/License/Ruff badges
 - (docs) available models table (local EN/DE GGUF, Groq, macOS say) in README
 - (docs) concise module/public API pydocs in `main.py` and `local_orpheus.py` (no restating inline comments)
 - (docs) header docs on `scripts/install_metal.sh`
 
 ### fix
+- (fix) load ``GROQ_API_KEY`` from ``~/.config/speaker/.env``, ``~/.speaker.env``, cwd ``.env``, or ``SPEAKER_ENV`` (global ``speak`` no longer requires exporting the key every session)
+- (fix) lazy-import ``llama_cpp`` / ``LocalOrpheus`` so ``speak --help`` and Groq work without Metal install
 - (fix) SNAC decoder defaults to CPU to avoid macOS CoreAnalytics "Context leak" console spam; set `SPEAKER_USE_COREML=1` to opt back in
 
 ## [0.0.1] — 2026-07-25

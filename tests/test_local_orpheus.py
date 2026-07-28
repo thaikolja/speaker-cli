@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from local_orpheus import CUSTOM_TOKEN_PREFIX, DEFAULT_VOICE, LANG_TO_REPO, LocalOrpheus
+from local_orpheus import (
+    CUSTOM_TOKEN_PREFIX,
+    DEFAULT_VOICE,
+    LANG_TO_REPO,
+    LocalOrpheus,
+    _import_llama,
+)
 
 
 def test_lang_repos_only_en_de() -> None:
@@ -17,6 +23,21 @@ def test_default_voices() -> None:
 def test_unsupported_lang_raises() -> None:
     with pytest.raises(ValueError, match="unsupported lang"):
         LocalOrpheus(lang="fr")
+
+
+def test_import_llama_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "llama_cpp" or name.startswith("llama_cpp."):
+            raise ImportError("no llama_cpp")
+        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(RuntimeError, match="llama-cpp-python is required"):
+        _import_llama()
 
 
 def test_token_to_id_parses_custom_token() -> None:
