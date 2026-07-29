@@ -995,8 +995,9 @@ def build_parser(defaults: Settings) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="speak",
         description=(
-            "Text-to-speech: English prefers Groq, German prefers local DE Orpheus "
-            f"(engine=auto). Defaults: {CONFIG_DIR / 'config.json'}."
+            "Text-to-speech: Groq first when it has a model for the language "
+            f"(EN/AR), else local Orpheus (EN/DE), else macOS say. "
+            f"Defaults: {CONFIG_DIR / 'config.json'}."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )

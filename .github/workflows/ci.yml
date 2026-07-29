@@ -12,11 +12,12 @@ concurrency:
 
 jobs:
   lint-test:
-    name: Lint & test (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: Lint & test (${{ matrix.os }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.12"]
 
     steps:
@@ -44,14 +45,19 @@ jobs:
         run: uv run mypy main.py local_orpheus.py tests
 
       - name: Pytest
-        run: uv run pytest --cov-fail-under=40
+        run: uv run pytest --cov-fail-under=70
 
-  # Smoke that lockfile stays consistent
+      - name: Smoke console script
+        run: |
+          uv run speak --help
+          uv run speak --write-config /tmp/speak-ci-config.json
+          test -f /tmp/speak-ci-config.json
+
   lockfile:
     name: Lockfile check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
