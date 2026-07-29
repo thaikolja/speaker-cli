@@ -1,7 +1,7 @@
 [project]
 name = "speaker"
 version = "0.0.1"
-description = "speak CLI — Groq / local Orpheus TTS for English and German, with macOS say fallback"
+description = "speak CLI — Groq / local Orpheus TTS (EN/DE/AR), with macOS say fallback"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
@@ -12,9 +12,7 @@ dependencies = [
   "huggingface-hub>=0.20.0",
   "langdetect>=1.0.9",
   "numpy>=2.4.6",
-  "onnxruntime>=1.27.0",
   "onnxruntime>=1.28.0",
-  "python-dotenv>=1.2.2",
 ]
 
 [project.optional-dependencies]
@@ -71,7 +69,7 @@ addopts = [
   "--cov=main",
   "--cov=local_orpheus",
   "--cov-report=term-missing",
-  "--cov-fail-under=40",
+  "--cov-fail-under=65",
 ]
 markers = [
   "integration: needs models / network / audio hardware",

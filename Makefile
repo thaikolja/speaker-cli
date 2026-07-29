@@ -23,8 +23,8 @@ lint:
 	uv run ruff check .
 
 format:
-	uv run ruff format .
 	uv run ruff check . --fix
+	uv run ruff format .
 
 typecheck:
 	uv run mypy main.py local_orpheus.py tests
@@ -36,7 +36,9 @@ cov:
 	uv run pytest --cov-report=html
 	@echo "open htmlcov/index.html"
 
-check: lint
+# Same order as CI: lint → format --check → mypy → pytest
+check:
+	uv run ruff check .
 	uv run ruff format --check .
 	$(MAKE) typecheck
 	$(MAKE) test

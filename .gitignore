@@ -25,18 +25,20 @@ coverage.xml
 .tox/
 .nox/
 
-# Secrets & local state
+# Secrets & local state (never commit real keys)
 .env
 .env.local
 .env.*.local
 !.env.example
+config.json
+!config.example.json
 .groq_usage.json
 
 # Audio / models (generated or large)
 speech.wav
 speech.mp3
 *.wav
-!tests/fixtures/**
+!tests/fixtures/**/*.wav
 models/
 bin/
 *.gguf
@@ -45,7 +47,7 @@ bin/
 # Vendor clone (optional; models come from Hugging Face)
 Orpheus-TTS/
 
-# OS / IDE
+# OS / IDE / agent tooling
 .DS_Store
 Thumbs.db
 .idea/
@@ -53,4 +55,4 @@ Thumbs.db
 *.swp
 *~
 .opencode/
-.serena
+.serena/

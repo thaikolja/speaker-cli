@@ -4,8 +4,9 @@
   "speed_min": 0.5,
   "speed_max": 3.0,
   "groq_api_key": "",
-  "groq_model": "canopylabs/orpheus-v1-english",
-  "groq_voice": "troy",
+  "groq_model": "",
+  "groq_voice": "",
+  "groq_direction": "",
   "groq_max_chars": 200,
   "groq_rpm": 10,
   "groq_rpd": 100,
@@ -20,5 +21,7 @@
   "say_voice": "",
   "delete_after_s": 10.0,
   "speech_file": "~/.cache/speak/speech.wav",
-  "usage_file": "~/.cache/speak/groq_usage.json"
+  "usage_file": "~/.cache/speak/groq_usage.json",
+  "verbose": false,
+  "quiet": false
 }

@@ -23,6 +23,7 @@ fi
 
 export CMAKE_ARGS="-DGGML_METAL=on"
 uv pip install llama-cpp-python --no-cache
-uv pip install "onnxruntime>=1.27" "huggingface-hub>=0.20" "numpy>=2.0"
-python -c "import llama_cpp; print('OK', llama_cpp.__file__)"
+# Runtime deps already in pyproject; re-ensure versions match lock floor.
+uv pip install "onnxruntime>=1.28" "huggingface-hub>=0.20" "numpy>=2.4"
+python3 -c "import llama_cpp; print('OK', llama_cpp.__file__)"
 echo "Metal llama-cpp-python installed."
