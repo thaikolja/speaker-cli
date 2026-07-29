@@ -30,6 +30,7 @@ import argparse
 import atexit
 import contextlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -146,6 +147,9 @@ class Settings:
     speech_file: str = str(CACHE_DIR / "speech.wav")
     usage_file: str = str(CACHE_DIR / "groq_usage.json")
 
+    verbose: bool = False
+    quiet: bool = False
+
     def normalize(self) -> Settings:
         """Clamp / alias fields; return self."""
         self.engine = normalize_engine(self.engine)
@@ -168,6 +172,32 @@ _settings = Settings()
 _engine: LocalOrpheus | None = None
 _engine_lang: str | None = None
 
+log = logging.getLogger("speak")
+log.addHandler(logging.NullHandler())
+
+
+def setup_logging(verbose: bool = False, quiet: bool = False) -> None:
+    """Configure the ``speak`` logger to stderr.
+
+    Levels: ``--quiet`` → ERROR only, default → WARNING, ``--verbose`` → DEBUG.
+    User-facing status is printed to stdout separately (see :func:`_status`).
+    """
+    level = logging.ERROR if quiet else (logging.DEBUG if verbose else logging.WARNING)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(
+        logging.Formatter("%(levelname)s: %(message)s" if verbose else "%(message)s")
+    )
+    log.handlers.clear()
+    log.addHandler(handler)
+    log.setLevel(level)
+    log.propagate = False
+
+
+def _status(msg: str) -> None:
+    """Print user-facing status to stdout unless ``--quiet``."""
+    if not get_settings().quiet:
+        print(msg)
+
 
 def get_settings() -> Settings:
     """Return the active settings object."""
@@ -185,10 +215,7 @@ def normalize_engine(raw: str) -> str:
     key = str(raw or "auto").strip().strip("'\"").lower().replace("-", "_").replace(" ", "_")
     engine = _SPEAK_ENGINE_ALIASES.get(key)
     if engine is None:
-        print(
-            f"Unknown engine={raw!r}; use auto|groq|local|say. Using auto.",
-            file=sys.stderr,
-        )
+        log.warning(f"Unknown engine={raw!r}; use auto|groq|local|say. Using auto.")
         return "auto"
     return engine
 
@@ -286,10 +313,10 @@ def load_config_file(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
-        print(f"Warning: could not read config {path}: {e}", file=sys.stderr)
+        log.warning(f"Warning: could not read config {path}: {e}")
         return {}
     if not isinstance(data, dict):
-        print(f"Warning: config {path} is not a JSON object; ignoring", file=sys.stderr)
+        log.warning(f"Warning: config {path} is not a JSON object; ignoring")
         return {}
     return data
 
@@ -678,7 +705,7 @@ def local_lang(s: str) -> str:
     lang = lang_code(s)
     if lang in ("en", "de"):
         return lang
-    print(f"Local Orpheus: unsupported lang {lang!r}, using en", file=sys.stderr)
+    log.warning(f"Local Orpheus: unsupported lang {lang!r}, using en")
     return "en"
 
 
@@ -710,7 +737,7 @@ def speak_local_orpheus(s: str, lang: str) -> None:
     voice = cfg.local_voice_en if lang == "en" else cfg.local_voice_de
     engine = get_local_engine(lang)
     speech = cfg.speech_path()
-    print(f"Local Orpheus → lang={lang} voice={voice}")
+    _status(f"Local Orpheus → lang={lang} voice={voice}")
 
     speech.unlink(missing_ok=True)
     sample_rate, samples = engine.tts(s, voice_id=voice)
@@ -722,7 +749,7 @@ def speak_local_orpheus(s: str, lang: str) -> None:
     try:
         play_and_cleanup(speech)
     except Exception as play_err:
-        print(f"Local audio saved but play failed ({play_err}); keeping {cfg.delete_after_s}s")
+        _status(f"Local audio saved but play failed ({play_err}); keeping {cfg.delete_after_s}s")
         cleanup_speech(speech)
 
 
@@ -775,13 +802,13 @@ def speak_groq(s: str, lang: str) -> None:
     voice = groq_voice_for(lang)
     direction = groq_direction_for(lang)
     if direction and lang not in GROQ_DIRECTIONS_LANGS:
-        print(f"Groq vocal direction ignored (lang={lang!r}; English model only)", file=sys.stderr)
+        log.warning(f"Groq vocal direction ignored (lang={lang!r}; English model only)")
 
     client = Groq(api_key=api_key, timeout=cfg.api_timeout_s)
     speed = groq_speech_speed()
     speech = cfg.speech_path()
     tag = f" [{direction}]" if direction else ""
-    print(f"Groq → {voice} @ {speed:g}x{tag}")
+    _status(f"Groq → {voice} @ {speed:g}x{tag}")
     response = client.audio.speech.create(
         model=model,
         voice=voice,
@@ -834,11 +861,11 @@ def speak_say(s: str, reason: str = "") -> None:
     lang = lang_code(s)
     voice = say_voice_for(lang)
     if reason:
-        print(f"macOS say ({reason})")
+        _status(f"macOS say ({reason})")
     else:
-        print("macOS say")
+        _status("macOS say")
     if voice:
-        print(f"voice: {voice}")
+        _status(f"voice: {voice}")
         subprocess.run(["say", "-v", voice, s], check=True)
     else:
         subprocess.run(["say", s], check=True)
@@ -884,7 +911,7 @@ def _try_local(s: str, lang: str, *, forced: bool, prior: str = "") -> tuple[boo
         return False, msg
     try:
         if prior:
-            print(f"Trying local Orpheus ({prior})…")
+            _status(f"Trying local Orpheus ({prior})…")
         speak_local_orpheus(s, lang)
         return True, ""
     except Exception as e:
@@ -908,24 +935,29 @@ def _try_say(s: str, *, reason: str = "", forced: bool = False) -> tuple[bool, s
 
 def _speak_chain(s: str, loc: str, order: list[str]) -> None:
     """Try backends in ``order`` (``groq`` | ``local`` | ``say``) until one works."""
+    log.debug(f"chain order={order} loc={loc!r}")
     reasons: list[str] = []
     for backend in order:
+        log.debug(f"trying backend={backend}")
         if backend == "groq":
             ok, why = _try_groq(s, loc, forced=False)
             if ok:
                 return
+            log.debug(f"backend=groq skipped: {why}")
             reasons.append(f"groq skipped: {why}")
         elif backend == "local":
             prior = "; ".join(reasons)
             ok, why = _try_local(s, loc, forced=False, prior=prior)
             if ok:
                 return
+            log.debug(f"backend=local skipped: {why}")
             reasons.append(f"local {why}")
         elif backend == "say":
             reason = "; ".join(reasons) if reasons else "primary"
             ok, why = _try_say(s, reason=reason, forced=False)
             if ok:
                 return
+            log.debug(f"backend=say skipped: {why}")
             reasons.append(f"say {why}")
     raise RuntimeError("; ".join(reasons) if reasons else f"no backend succeeded for lang={loc}")
 
@@ -939,6 +971,7 @@ def speak(s: str) -> None:
     """
     engine = speak_engine()
     lang = lang_code(s)
+    log.debug(f"speak engine={engine!r} lang={lang!r} chars={len(s)}")
 
     if engine == "groq":
         ok, why = _try_groq(s, lang, forced=True)
@@ -1111,6 +1144,20 @@ def build_parser(defaults: Settings) -> argparse.ArgumentParser:
         metavar="PATH",
         help="Write full default config.json to PATH and exit",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=defaults.verbose,
+        help="Debug logging on stderr",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        default=defaults.quiet,
+        help="Suppress status output; errors only",
+    )
     return parser
 
 
@@ -1146,28 +1193,35 @@ def cli(argv: list[str] | None = None) -> int:
         out = args.write_config.expanduser()
         ensure_parent(out)
         out.write_text(json.dumps(default_settings_dict(), indent=2) + "\n", encoding="utf-8")
-        print(f"Wrote default config to {out}")
+        print(f"Wrote default config to {out}")  # always shown, even in --quiet
         return 0
 
     settings = settings_from_args(base, args)
     set_settings(settings)
+    setup_logging(verbose=settings.verbose, quiet=settings.quiet)
+    log.debug(f"settings: engine={settings.engine} speed={settings.speed} lang-chain=auto")
 
     if args.file is not None:
         payload = args.file.read_text(encoding="utf-8").strip()
     elif args.text is not None:
         payload = args.text
     else:
-        print("No text to speak. Pass text or -f FILE.", file=sys.stderr)
+        log.error("No text to speak. Pass text or -f FILE.")
         return 2
 
     if not payload:
-        print("No text to speak.", file=sys.stderr)
+        log.error("No text to speak.")
         return 2
 
     try:
         speak(payload)
+    except KeyboardInterrupt:
+        # Ctrl+C during afplay / Groq / model load — clean up the WAV and exit 130.
+        cleanup_speech(get_settings().speech_path(), delay_s=0)
+        log.error("interrupted")
+        return 130
     except Exception as e:
-        print(f"error: {e}", file=sys.stderr)
+        log.error(f"error: {e}")
         return 1
 
     return 0
