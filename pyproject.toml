@@ -69,7 +69,7 @@ addopts = [
   "--cov=main",
   "--cov=local_orpheus",
   "--cov-report=term-missing",
-  "--cov-fail-under=65",
+  "--cov-fail-under=70",
 ]
 markers = [
   "integration: needs models / network / audio hardware",
