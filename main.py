@@ -1,11 +1,17 @@
 """speak — Orpheus TTS CLI with selectable backends and JSON config.
 
-Default priority (``engine=auto``), by language:
+Workflow (``engine=auto``), language-aware — Groq first *when it has a model for
+that language*, else local first, macOS ``say`` always last:
 
-* **English:** Groq → local Orpheus → macOS ``say``
-* **German:** local Orpheus (DE GGUF) → Groq → macOS ``say``
+* **English:**     Groq → local Orpheus → macOS ``say``
+* **Arabic:**      Groq → macOS ``say``            (no local AR model)
+* **German/other:** local Orpheus → macOS ``say``  (no Groq DE/other model)
 
-Force one backend for all languages with ``engine=groq|local|say``.
+Force one backend for *all* languages with ``engine=groq|local|say`` (it does
+not fall back on failure).
+
+Groq supports vocal directions (``[cheerful]``, ``[whisper]``, …) on the English
+model only; see ``--direction`` / ``groq_direction``.
 
 Defaults live in ``config.json`` (see :func:`config_paths`). CLI flags override
 the loaded config; all flags are optional.
@@ -14,7 +20,7 @@ CLI::
 
     speak "Hello world"
     speak "Guten Tag"
-    speak -f notes.txt --engine groq --speed 1.25
+    speak -f notes.txt --engine groq --speed 1.25 --direction cheerful
     speak --help
 """
 
@@ -90,6 +96,22 @@ SAY_SKIP = {
     "Grandpa",
 }
 
+# Groq TTS models exist for a limited set of languages (English + Arabic only).
+# Source: https://console.groq.com/docs/text-to-speech
+GROQ_LANG_TO_MODEL: dict[str, str] = {
+    "en": "canopylabs/orpheus-v1-english",
+    "ar": "canopylabs/orpheus-arabic-saudi",
+}
+GROQ_DEFAULT_VOICE: dict[str, str] = {"en": "troy", "ar": "fahad"}
+# Vocal directions are supported by the English Orpheus model only.
+GROQ_DIRECTIONS_LANGS = frozenset({"en"})
+# Local Orpheus GGUF repos cover en/de only (see local_orpheus.LANG_TO_REPO).
+LOCAL_LANGS = frozenset(("en", "de"))
+
+# Backends the auto chain will consider, in the order preferred per language.
+# Groq goes first when it has a model for the language; otherwise local first.
+# ``say`` is always the last resort. Viable backends are filtered at runtime.
+
 
 @dataclass
 class Settings:
@@ -101,8 +123,10 @@ class Settings:
     speed_max: float = 3.0
 
     groq_api_key: str = ""
-    groq_model: str = "canopylabs/orpheus-v1-english"
-    groq_voice: str = "troy"
+    # Empty → derive from detected language (GROQ_LANG_TO_MODEL / GROQ_DEFAULT_VOICE).
+    groq_model: str = ""
+    groq_voice: str = ""
+    groq_direction: str = ""  # English model only; "[cheerful]"-style, see normalize()
     groq_max_chars: int = 200
     groq_rpm: int = 10
     groq_rpd: int = 100
@@ -127,6 +151,7 @@ class Settings:
         self.engine = normalize_engine(self.engine)
         self.speed = max(self.speed_min, min(self.speed_max, float(self.speed)))
         self.groq_api_key = (self.groq_api_key or "").strip().strip("'\"")
+        self.groq_direction = sanitize_direction(self.groq_direction)
         self.say_voice = (self.say_voice or "").strip()
         self.speech_file = str(Path(self.speech_file).expanduser())
         self.usage_file = str(Path(self.usage_file).expanduser())
@@ -138,23 +163,6 @@ class Settings:
     def usage_path(self) -> Path:
         return Path(self.usage_file)
 
-
-# Module defaults / test aliases (mirror Settings field defaults)
-DEFAULT_SETTINGS = Settings()
-ORPHEUS_SPEED = DEFAULT_SETTINGS.speed
-ORPHEUS_SPEED_MIN = DEFAULT_SETTINGS.speed_min
-ORPHEUS_SPEED_MAX = DEFAULT_SETTINGS.speed_max
-ORPHEUS_MAX_CHARS = DEFAULT_SETTINGS.groq_max_chars
-ORPHEUS_RPM = DEFAULT_SETTINGS.groq_rpm
-ORPHEUS_RPD = DEFAULT_SETTINGS.groq_rpd
-ORPHEUS_TPM = DEFAULT_SETTINGS.groq_tpm
-ORPHEUS_TPD = DEFAULT_SETTINGS.groq_tpd
-ORPHEUS_MODEL = DEFAULT_SETTINGS.groq_model
-ORPHEUS_VOICE = DEFAULT_SETTINGS.groq_voice
-DELETE_AFTER_S = DEFAULT_SETTINGS.delete_after_s
-API_TIMEOUT_S = DEFAULT_SETTINGS.api_timeout_s
-PREFLIGHT_TIMEOUT_S = DEFAULT_SETTINGS.preflight_timeout_s
-DEFAULT_SPEAK_ENGINE = DEFAULT_SETTINGS.engine
 
 _settings = Settings()
 _engine: LocalOrpheus | None = None
@@ -183,6 +191,74 @@ def normalize_engine(raw: str) -> str:
         )
         return "auto"
     return engine
+
+
+def sanitize_direction(raw: str) -> str:
+    """Normalize a Groq vocal direction (``[cheerful]`` style) to bare words.
+
+    Strips user-supplied brackets, keeps ``[a-z0-9 -]`` only, collapses spaces,
+    truncates to 30 chars. Empty / whitespace-only → ``""`` (no direction applied).
+    """
+    s = (raw or "").strip().strip("[]")
+    s = re.sub(r"[^a-z0-9 -]", "", s.lower())
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:30]
+
+
+def groq_model_for(lang: str) -> str:
+    """Effective Groq model id: explicit override else the model for ``lang``.
+
+    Empty ``groq_model`` (the default) derives from :data:`GROQ_LANG_TO_MODEL`,
+    falling back to the English model if ``lang`` is unknown.
+    """
+    cfg = get_settings()
+    return cfg.groq_model or GROQ_LANG_TO_MODEL.get(lang, GROQ_LANG_TO_MODEL["en"])
+
+
+def groq_voice_for(lang: str) -> str:
+    """Effective Groq voice: explicit override else the default for ``lang``."""
+    cfg = get_settings()
+    return cfg.groq_voice or GROQ_DEFAULT_VOICE.get(lang, GROQ_DEFAULT_VOICE["en"])
+
+
+def groq_direction_for(lang: str) -> str:
+    """Effective Groq vocal direction, or ``""`` if the language has no support.
+
+    Vocal directions are an English-model-only feature (see Groq docs); for any
+    other language the direction is ignored even if set.
+    """
+    cfg = get_settings()
+    return cfg.groq_direction if lang in GROQ_DIRECTIONS_LANGS else ""
+
+
+def auto_order(lang: str) -> list[str]:
+    """Backend order for ``engine=auto``: Groq first when it has a model for
+    ``lang``, else local first; ``say`` is always the last resort.
+
+    Backends with no model for the language are skipped entirely (no doomed
+    network round-trip, no garbled output):
+
+    * ``en``  → ``[groq, local, say]``
+    * ``ar``  → ``[groq, say]``          (no local AR model)
+    * ``de``  → ``[local, say]``         (no Groq DE model)
+    * other  → ``[say]``                  (no local/Groq model)
+    """
+    order: list[str] = []
+    if lang in GROQ_LANG_TO_MODEL:
+        order.append("groq")
+    if lang in LOCAL_LANGS:
+        if "groq" in order:
+            order.append("local")
+        else:
+            order.insert(0, "local")
+    order.append("say")
+    return order
+
+
+def groq_input(s: str, lang: str) -> str:
+    """Prepend the vocal direction to ``s`` for the Groq English model, else ``s``."""
+    direction = groq_direction_for(lang)
+    return f"[{direction}] {s}" if direction else s
 
 
 def config_paths(explicit: Path | None = None) -> list[Path]:
@@ -688,22 +764,29 @@ def preflight_groq(*, timeout_s: float | None = None) -> tuple[bool, str]:
     return True, "ok"
 
 
-def speak_groq(s: str) -> None:
+def speak_groq(s: str, lang: str) -> None:
     """Synthesize via Groq Orpheus API, play, record usage, cleanup."""
     cfg = get_settings()
     api_key = groq_api_key()
     if not api_key:
         raise RuntimeError("groq_api_key not set")
 
+    model = groq_model_for(lang)
+    voice = groq_voice_for(lang)
+    direction = groq_direction_for(lang)
+    if direction and lang not in GROQ_DIRECTIONS_LANGS:
+        print(f"Groq vocal direction ignored (lang={lang!r}; English model only)", file=sys.stderr)
+
     client = Groq(api_key=api_key, timeout=cfg.api_timeout_s)
     speed = groq_speech_speed()
     speech = cfg.speech_path()
-    print(f"Groq → {cfg.groq_voice} @ {speed:g}x")
+    tag = f" [{direction}]" if direction else ""
+    print(f"Groq → {voice} @ {speed:g}x{tag}")
     response = client.audio.speech.create(
-        model=cfg.groq_model,
-        voice=cfg.groq_voice,
+        model=model,
+        voice=voice,
         response_format="wav",
-        input=s,
+        input=groq_input(s, lang),
     )
     ensure_parent(speech)
     speech.write_bytes(response.read())
@@ -748,7 +831,7 @@ def say_voice_for(
 
 def speak_say(s: str, reason: str = "") -> None:
     """Speak with macOS ``say``. ``reason`` is logged when non-empty."""
-    lang = local_lang(s)
+    lang = lang_code(s)
     voice = say_voice_for(lang)
     if reason:
         print(f"macOS say ({reason})")
@@ -761,8 +844,13 @@ def speak_say(s: str, reason: str = "") -> None:
         subprocess.run(["say", s], check=True)
 
 
-def _try_groq(s: str, *, forced: bool) -> tuple[bool, str]:
+def _try_groq(s: str, lang: str, *, forced: bool) -> tuple[bool, str]:
     """Attempt Groq TTS. Returns ``(True, "")`` on success, else ``(False, reason)``."""
+    if lang not in GROQ_LANG_TO_MODEL:
+        msg = f"no Groq model for lang={lang!r}"
+        if forced:
+            raise RuntimeError(f"engine=groq failed: {msg}")
+        return False, msg
     ok, why = preflight_groq()
     if not ok:
         return False, why
@@ -770,7 +858,7 @@ def _try_groq(s: str, *, forced: bool) -> tuple[bool, str]:
     if not limits_ok:
         return False, limit_reason
     try:
-        speak_groq(s)
+        speak_groq(s, lang)
         return True, ""
     except RateLimitError as e:
         msg = f"rate limit: {e}"
@@ -823,7 +911,7 @@ def _speak_chain(s: str, loc: str, order: list[str]) -> None:
     reasons: list[str] = []
     for backend in order:
         if backend == "groq":
-            ok, why = _try_groq(s, forced=False)
+            ok, why = _try_groq(s, loc, forced=False)
             if ok:
                 return
             reasons.append(f"groq skipped: {why}")
@@ -843,29 +931,30 @@ def _speak_chain(s: str, loc: str, order: list[str]) -> None:
 
 
 def speak(s: str) -> None:
-    """Speak ``s`` using the active settings engine (language-aware when auto)."""
+    """Speak ``s`` using the active settings engine (language-aware when auto).
+
+    For ``engine=auto`` the chain is data-driven: Groq first when it has a model
+    for the detected language, else local Orpheus first, macOS ``say`` always
+    last. Forced engines apply to all languages and do not fall back.
+    """
     engine = speak_engine()
-    loc = local_lang(s)
+    lang = lang_code(s)
 
     if engine == "groq":
-        ok, why = _try_groq(s, forced=True)
+        ok, why = _try_groq(s, lang, forced=True)
         if not ok:
             raise RuntimeError(f"engine=groq failed: {why}")
         return
 
     if engine == "local":
-        _try_local(s, loc, forced=True)
+        _try_local(s, local_lang(s), forced=True)
         return
 
     if engine == "say":
         _try_say(s, reason="engine=say", forced=True)
         return
 
-    # auto: English prioritizes Groq; German prioritizes local DE Orpheus.
-    if loc == "de":
-        _speak_chain(s, loc, ["local", "groq", "say"])
-    else:
-        _speak_chain(s, loc, ["groq", "local", "say"])
+    _speak_chain(s, local_lang(s), auto_order(lang))
 
 
 def build_parser(defaults: Settings) -> argparse.ArgumentParser:
@@ -919,11 +1008,22 @@ def build_parser(defaults: Settings) -> argparse.ArgumentParser:
         default=None,
         help="Groq API key (default: groq_api_key from config.json; never shown here)",
     )
-    parser.add_argument("--groq-model", default=defaults.groq_model, help="Groq TTS model id")
+    parser.add_argument(
+        "--groq-model",
+        default=defaults.groq_model,
+        help="Groq TTS model id (empty = derive from detected language)",
+    )
     parser.add_argument(
         "--groq-voice",
         default=defaults.groq_voice,
-        help="Groq voice id (troy, hannah, austin, …)",
+        help="Groq voice id (empty = derive from detected language)",
+    )
+    parser.add_argument(
+        "-d",
+        "--direction",
+        default=defaults.groq_direction,
+        dest="groq_direction",
+        help="Groq vocal direction for the English model (e.g. cheerful, whisper, dramatic)",
     )
     parser.add_argument(
         "--max-chars",

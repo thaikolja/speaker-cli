@@ -227,7 +227,10 @@ def test_cli_write_config(tmp_path: Path) -> None:
     assert main.cli(["--write-config", str(out)]) == 0
     data = json.loads(out.read_text())
     assert data["engine"] == "auto"
-    assert data["groq_voice"] == "troy"
+    # Empty groq_model/voice/direction → derive from detected language at runtime.
+    assert data["groq_model"] == ""
+    assert data["groq_voice"] == ""
+    assert data["groq_direction"] == ""
     assert "speed" in data
 
 
@@ -382,7 +385,7 @@ def test_speak_english_auto_prefers_groq(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(main, "local_lang", lambda _s: "en")
     monkeypatch.setattr(main, "preflight_groq", lambda **_k: (True, "ok"))
     monkeypatch.setattr(main, "fits_groq_limits", lambda _s, **_k: (True, "ok"))
-    monkeypatch.setattr(main, "speak_groq", lambda _s: order.append("groq"))
+    monkeypatch.setattr(main, "speak_groq", lambda _s, _l: order.append("groq"))
     monkeypatch.setattr(main, "speak_local_orpheus", lambda _s, _l: order.append("local"))
     monkeypatch.setattr(main, "speak_say", lambda _s, _r="": order.append("say"))
     main.speak("Hello friend, how are you today?")
@@ -394,7 +397,7 @@ def test_speak_german_auto_prefers_local(monkeypatch: pytest.MonkeyPatch) -> Non
     langs: list[str] = []
     main.set_settings(main.Settings(engine="auto", groq_api_key="x"))
     monkeypatch.setattr(main, "local_lang", lambda _s: "de")
-    monkeypatch.setattr(main, "speak_groq", lambda _s: order.append("groq"))
+    monkeypatch.setattr(main, "speak_groq", lambda _s, _l: order.append("groq"))
 
     def local(_s: str, lang: str) -> None:
         langs.append(lang)
@@ -412,7 +415,7 @@ def test_speak_local_when_preflight_fails(monkeypatch: pytest.MonkeyPatch) -> No
     main.set_settings(main.Settings(engine="auto"))
     monkeypatch.setattr(main, "local_lang", lambda _s: "en")
     monkeypatch.setattr(main, "preflight_groq", lambda **_k: (False, "no key"))
-    monkeypatch.setattr(main, "speak_groq", lambda _s: order.append("groq"))
+    monkeypatch.setattr(main, "speak_groq", lambda _s, _l: order.append("groq"))
     monkeypatch.setattr(main, "speak_local_orpheus", lambda _s, _l: order.append("local"))
     monkeypatch.setattr(main, "speak_say", lambda _s, _r="": order.append("say"))
     main.speak("Hello friend, how are you today?")
@@ -426,7 +429,7 @@ def test_speak_local_then_say_when_groq_raises(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(main, "preflight_groq", lambda **_k: (True, "ok"))
     monkeypatch.setattr(main, "fits_groq_limits", lambda _s, **_k: (True, "ok"))
 
-    def boom(_s: str) -> None:
+    def boom(_s: str, _l: str) -> None:
         order.append("groq")
         raise RuntimeError("api down")
 
@@ -441,28 +444,23 @@ def test_speak_local_then_say_when_groq_raises(monkeypatch: pytest.MonkeyPatch) 
     assert order == ["groq", "local", "say"]
 
 
-def test_speak_maps_unsupported_lang_to_en_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_speak_unsupported_lang_uses_say_only(monkeypatch: pytest.MonkeyPatch) -> None:
     order: list[str] = []
-    langs: list[str] = []
     main.set_settings(main.Settings(engine="auto"))
-    monkeypatch.setattr(main, "local_lang", lambda _s: "en")  # fr mapped to en upstream
-    monkeypatch.setattr(main, "preflight_groq", lambda **_k: (False, "no key"))
-
-    def local(_s: str, lang: str) -> None:
-        langs.append(lang)
-        order.append("local")
-
-    monkeypatch.setattr(main, "speak_local_orpheus", local)
+    # French text: neither Groq nor local Orpheus has a French model, so the auto
+    # chain collapses to macOS say (the only backend that can handle it).
+    monkeypatch.setattr(main, "lang_code", lambda _s: "fr")
+    monkeypatch.setattr(main, "speak_groq", lambda _s, _l: order.append("groq"))
+    monkeypatch.setattr(main, "speak_local_orpheus", lambda _s, _l: order.append("local"))
     monkeypatch.setattr(main, "speak_say", lambda _s, _r="": order.append("say"))
     main.speak("Bonjour tout le monde aujourd'hui")
-    assert order == ["local"]
-    assert langs == ["en"]
+    assert order == ["say"]
 
 
 def test_speak_engine_forced_say(monkeypatch: pytest.MonkeyPatch) -> None:
     order: list[str] = []
     main.set_settings(main.Settings(engine="say"))
-    monkeypatch.setattr(main, "speak_groq", lambda _s: order.append("groq"))
+    monkeypatch.setattr(main, "speak_groq", lambda _s, _l: order.append("groq"))
     monkeypatch.setattr(main, "speak_local_orpheus", lambda _s, _l: order.append("local"))
     monkeypatch.setattr(main, "speak_say", lambda _s, _r="": order.append("say"))
     main.speak("Hello friend, how are you today?")
@@ -473,7 +471,7 @@ def test_speak_engine_forced_local(monkeypatch: pytest.MonkeyPatch) -> None:
     order: list[str] = []
     main.set_settings(main.Settings(engine="local"))
     monkeypatch.setattr(main, "lang_code", lambda _s: "en")
-    monkeypatch.setattr(main, "speak_groq", lambda _s: order.append("groq"))
+    monkeypatch.setattr(main, "speak_groq", lambda _s, _l: order.append("groq"))
     monkeypatch.setattr(main, "speak_local_orpheus", lambda _s, _l: order.append("local"))
     monkeypatch.setattr(main, "speak_say", lambda _s, _r="": order.append("say"))
     main.speak("Hello friend, how are you today?")
