@@ -4,24 +4,24 @@
 
 ```bash
 uv sync --extra dev
-./scripts/install_metal.sh   # macOS local Orpheus
-speak --write-config ~/.config/speak/config.json   # then set groq_api_key
+./scripts/install_metal.sh   # macOS local Orpheus (optional)
+speak --write-config ~/.config/speak/config.json
 pre-commit install
 ```
 
 ## Workflow
 
-1. Create a branch from `main`
-2. Make focused changes
-3. Run `make check`
+1. Branch from `main`
+2. Focused changes
+3. `make check`
 4. Update `CHANGELOG.md` under `[Unreleased]` if user-visible
 5. Open a PR
 
 ## Guidelines
 
-- EN/DE only unless discussed
-- No secrets in the repo
-- Unit-test pure logic; keep integration tests optional
+- Local Orpheus: EN/DE only. Groq: EN + Arabic only (see `GROQ_LANG_TO_MODEL`)
+- No secrets in the repo (`config.json` is gitignored)
+- Unit-test pure logic; integration tests opt-in (`SPEAK_RUN_INTEGRATION=1`)
 - Prefer small PRs
 
-See [AGENTS.md](AGENTS.md) for agent-specific rules.
+See [docs/development.md](docs/development.md) and [AGENTS.md](AGENTS.md).
