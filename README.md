@@ -74,7 +74,7 @@ uv sync --extra dev
 make check
 ```
 
-See [docs/development.md](docs/development.md) and [AGENTS.md](AGENTS.md).
+See [docs/development.md](docs/development.md).
 
 ## License
 

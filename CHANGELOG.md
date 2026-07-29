@@ -29,7 +29,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### docs
 - (docs) `docs/` site: architecture, configuration, backends, CLI, development, troubleshooting
-- (docs) README + AGENTS.md match production workflow
+- (docs) README matches production workflow; AGENTS.md removed from repo (local-only / gitignored)
 - (docs) repo URLs → `thaikolja/speaker-cli`
 
 ### breaking

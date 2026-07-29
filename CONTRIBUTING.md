@@ -24,4 +24,4 @@ pre-commit install
 - Unit-test pure logic; integration tests opt-in (`SPEAK_RUN_INTEGRATION=1`)
 - Prefer small PRs
 
-See [docs/development.md](docs/development.md) and [AGENTS.md](AGENTS.md).
+See [docs/development.md](docs/development.md).

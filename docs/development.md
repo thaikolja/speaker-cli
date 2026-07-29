@@ -49,4 +49,4 @@ SPEAK_RUN_INTEGRATION=1 GROQ_API_KEY=… uv run pytest -m integration
 | `config.example.json` | Sample config |
 | `.env.example` | Sample env |
 
-See also [AGENTS.md](../AGENTS.md) and [CONTRIBUTING.md](../CONTRIBUTING.md).
+See also [CONTRIBUTING.md](../CONTRIBUTING.md).
