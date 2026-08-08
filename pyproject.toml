@@ -9,7 +9,7 @@ authors = [{ name = "Kolja" }]
 keywords = ["tts", "orpheus", "speech", "local", "groq", "speak"]
 dependencies = [
   "groq>=1.6.0",
-  "huggingface-hub>=0.20.0",
+  "huggingface-hub>=1.26.0",
   "langdetect>=1.0.9",
   "numpy>=2.4.6",
   "onnxruntime>=1.28.0",
